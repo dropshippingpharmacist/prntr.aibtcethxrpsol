@@ -140,7 +140,7 @@ TELEGRAM_CHAT_ID = "5747777199"  # Only this chat ID now
 
 # OANDA Configuration
 OANDA_API_KEY = "cc6ca450ddff84ca7ed0069ca8c12d16-a60c7f723f3f5e6cd34143cbea73645c"  # <-- YOU MUST REPLACE THIS
-OANDA_ACCOUNT_ID = "YOUR_OANDA_ACCOUNT_ID_HERE"  # <-- YOU MUST REPLACE THIS
+OANDA_ACCOUNT_ID = "101-001-38930397-001"  # <-- YOU MUST REPLACE THIS
 OANDA_ENVIRONMENT = "practice"  # "practice" for demo, "live" for real
 
 # Instruments to scan (Forex, Indices, Metals, Commodities, Oil)
