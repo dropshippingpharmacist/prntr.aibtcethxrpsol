@@ -145,22 +145,14 @@ OANDA_ENVIRONMENT = "practice"  # "practice" for demo, "live" for real
 
 # Instruments to scan (Forex, Indices, Metals, Commodities, Oil)
 INSTRUMENTS = [
-    # Forex Majors
+    # Forex (these work)
     "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "USD_CHF", "NZD_USD",
-    # Forex Minors
     "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CAD_JPY", "CHF_JPY", "EUR_AUD",
-    # Indices
-    "SPX500_USD", "NAS100_USD", "UK100_GBP", "GER30_EUR", "FRA40_EUR", "JPN225_JPY",
-    # Metals
-    "XAU_USD",  # Gold
-    "XAG_USD",  # Silver
-    # Commodities
-    "XCU_USD",  # Copper
-    "XPT_USD",  # Platinum
-    # Oil
-    "BCO_USD",  # Brent Crude Oil
-    "WTICO_USD",  # WTI Crude Oil
-    # Crypto (OANDA also offers crypto)
+    # Metals (these work)
+    "XAU_USD", "XAG_USD",
+    # Oil (these work)
+    "BCO_USD", "WTICO_USD",
+    # Crypto (these work)
     "BTC_USD", "ETH_USD",
 ]
 
