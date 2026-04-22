@@ -135,7 +135,7 @@ warnings.filterwarnings("ignore")
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-TELEGRAM_BOT_TOKEN = "8013335919:AAHCzQWVwP2Jsv0klNtTzF7qUX6PuD_gYZ0"
+TELEGRAM_BOT_TOKEN = "8335392741:AAGd0nMObLGljLleORQ9j-rCw9pW6vEqnLw"
 TELEGRAM_CHAT_ID = "5747777199"  # Only this chat ID now
 
 # OANDA Configuration
