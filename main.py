@@ -115,9 +115,20 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import requests
-import ccxt
 from scipy.signal import find_peaks
 from scipy import stats
+
+# OANDA imports
+try:
+    import oandapyV20
+    import oandapyV20.endpoints.instruments as instruments
+    from oandapyV20.contrib.requests import (
+        MarketOrderRequest, StopLossDetails, TakeProfitDetails
+    )
+    OANDA_AVAILABLE = True
+except ImportError:
+    OANDA_AVAILABLE = False
+    print("WARNING: oandapyV20 not installed. Run: pip install oandapyV20")
 
 warnings.filterwarnings("ignore")
 
@@ -125,11 +136,35 @@ warnings.filterwarnings("ignore")
 # CONFIGURATION
 # =============================================================================
 TELEGRAM_BOT_TOKEN = "8013335919:AAHCzQWVwP2Jsv0klNtTzF7qUX6PuD_gYZ0"
-TELEGRAM_CHAT_ID = "5747777199"  # Original (kept for compatibility)
-TELEGRAM_CHAT_IDS = ["5747777199", "-1002841352895"]  # Both chats
+TELEGRAM_CHAT_ID = "5747777199"  # Only this chat ID now
 
-EXCHANGE_NAME = "bitget"
-MIN_VOLUME_USD = 100000
+# OANDA Configuration
+OANDA_API_KEY = "YOUR_OANDA_API_KEY_HERE"  # <-- YOU MUST REPLACE THIS
+OANDA_ACCOUNT_ID = "YOUR_OANDA_ACCOUNT_ID_HERE"  # <-- YOU MUST REPLACE THIS
+OANDA_ENVIRONMENT = "practice"  # "practice" for demo, "live" for real
+
+# Instruments to scan (Forex, Indices, Metals, Commodities, Oil)
+INSTRUMENTS = [
+    # Forex Majors
+    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "USD_CHF", "NZD_USD",
+    # Forex Minors
+    "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CAD_JPY", "CHF_JPY", "EUR_AUD",
+    # Indices
+    "SPX500_USD", "NAS100_USD", "UK100_GBP", "GER30_EUR", "FRA40_EUR", "JPN225_JPY",
+    # Metals
+    "XAU_USD",  # Gold
+    "XAG_USD",  # Silver
+    # Commodities
+    "XCU_USD",  # Copper
+    "XPT_USD",  # Platinum
+    # Oil
+    "BCO_USD",  # Brent Crude Oil
+    "WTICO_USD",  # WTI Crude Oil
+    # Crypto (OANDA also offers crypto)
+    "BTC_USD", "ETH_USD",
+]
+
+MIN_VOLUME_USD = 100000  # For filtering (OANDA doesn't have volume, using spread instead)
 MAX_PAIRS_TO_SCAN = 100
 SCAN_INTERVAL_SECONDS = 60
 
@@ -729,7 +764,7 @@ class LiquidityDetector:
             return grabs
         
         highs, high_idx, lows, low_idx = find_swing_points(df, lookback=3)
-        avg_volume = float(df['volume'].tail(20).mean())
+        avg_volume = float(df['volume'].tail(20).mean()) if 'volume' in df.columns else 1.0
         
         for sp_price, sp_idx in zip(highs[-5:], high_idx[-5:]):
             for i in range(sp_idx + 1, min(sp_idx + 15, len(df))):
@@ -741,7 +776,7 @@ class LiquidityDetector:
                         continue
                     
                     confirmed = (i + 1 < len(df) and df.iloc[i+1]['close'] < sp_price)
-                    volume_spike = candle['volume'] > avg_volume * 1.5
+                    volume_spike = (candle['volume'] > avg_volume * 1.5) if 'volume' in df.columns else False
                     double_effect = confirmed and (volume_spike or candle['close'] > candle['open'])
                     cascade = confirmed and i + 3 < len(df) and all(
                         df.iloc[i+k]['close'] < df.iloc[i+k-1]['close'] for k in range(1, 3))
@@ -762,7 +797,7 @@ class LiquidityDetector:
                         continue
                     
                     confirmed = (i + 1 < len(df) and df.iloc[i+1]['close'] > sp_price)
-                    volume_spike = candle['volume'] > avg_volume * 1.5
+                    volume_spike = (candle['volume'] > avg_volume * 1.5) if 'volume' in df.columns else False
                     double_effect = confirmed and (volume_spike or candle['close'] < candle['open'])
                     cascade = confirmed and i + 3 < len(df) and all(
                         df.iloc[i+k]['close'] > df.iloc[i+k-1]['close'] for k in range(1, 3))
@@ -1469,8 +1504,7 @@ class EnhancedTCTAnalyzer:
                 extras["extreme_liq"] = True
             if extreme_ob and current_price >= extreme_ob.low * 0.99:
                 has_extreme = True
-                extras["extreme_ob"] = True
-            
+                extras["extreme_ob"] = True            
             if has_extreme:
                 tap3 = current_price
                 if self._check_tap_spacing(tap1, tap2, tap3) and tap3 < tap2:
@@ -1746,41 +1780,83 @@ class EnhancedTCTAnalyzer:
 
 
 # =============================================================================
-# DATA FETCHER
+# DATA FETCHER - OANDA VERSION
 # =============================================================================
 class DataFetcher:
     def __init__(self):
-        self.exchange = ccxt.bitget({
-            'enableRateLimit': True,
-            'timeout': 30000,
-            'options': {'defaultType': 'spot'}
-        })
+        if not OANDA_AVAILABLE:
+            raise ImportError("oandapyV20 not installed. Run: pip install oandapyV20")
+        
+        self.api_key = OANDA_API_KEY
+        self.account_id = OANDA_ACCOUNT_ID
+        self.environment = OANDA_ENVIRONMENT
+        
+        # Create OANDA client
+        self.client = oandapyV20.API(access_token=self.api_key, environment=self.environment)
+        
         self._cache: Dict[str, Tuple[pd.DataFrame, float]] = {}
         self._ttl = 180
-        self._top_coins_cache = None
-        self._cache_time = 0
     
-    def get_all_altcoins(self) -> List[str]:
-        """Return only BTC, SOL, XRP, ETH"""
-        return ["BTC/USDT", "SOL/USDT", "XRP/USDT", "ETH/USDT"]
+    def get_all_instruments(self) -> List[str]:
+        """Return the list of instruments to scan"""
+        return INSTRUMENTS
     
     def fetch_ohlcv(self, symbol: str, timeframe: str = "4h", limit: int = 200) -> pd.DataFrame:
+        """Fetch OHLCV data from OANDA"""
         key = f"{symbol}_{timeframe}_{limit}"
         if key in self._cache and time.time() - self._cache[key][1] < self._ttl:
             return self._cache[key][0]
         
         try:
-            tf_map = {'5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h'}
-            ohlcv = self.exchange.fetch_ohlcv(symbol, tf_map.get(timeframe, '4h'), limit=limit)
-            if not ohlcv:
+            # OANDA timeframe mapping
+            tf_map = {
+                '5m': 'M5',
+                '15m': 'M15',
+                '30m': 'M30',
+                '1h': 'H1',
+                '4h': 'H4',
+            }
+            
+            oanda_tf = tf_map.get(timeframe, 'H4')
+            
+            # Build request
+            params = {
+                "count": limit,
+                "granularity": oanda_tf,
+                "price": "M"  # Midpoint candles
+            }
+            
+            request = instruments.InstrumentsCandles(instrument=symbol, params=params)
+            response = self.client.request(request)
+            
+            if 'candles' not in response:
                 return pd.DataFrame()
             
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            # Parse candles
+            data = []
+            for candle in response['candles']:
+                if candle['complete']:
+                    data.append({
+                        'timestamp': candle['time'],
+                        'open': float(candle['mid']['o']),
+                        'high': float(candle['mid']['h']),
+                        'low': float(candle['mid']['l']),
+                        'close': float(candle['mid']['c']),
+                        'volume': 0  # OANDA doesn't provide volume
+                    })
+            
+            if not data:
+                return pd.DataFrame()
+            
+            df = pd.DataFrame(data)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
             df.set_index('timestamp', inplace=True)
+            
             self._cache[key] = (df, time.time())
             return df
-        except:
+            
+        except Exception as e:
+            log.error(f"Error fetching {symbol} {timeframe}: {e}")
             return pd.DataFrame()
 
 
@@ -1841,29 +1917,23 @@ class TelegramNotifier:
     📊 R:R 1:{s.rr:.1f} | Conf: {int(s.confidence*100)}%
     ⏱️ LTF: {ltf}"""
 
-        # Send to BOTH chats
-        chat_ids = ["5747777199", "-1002841352895"]
-    
-        success = False
-        for chat_id in chat_ids:
-            try:
-                r = requests.post(
-                    self._url, 
-                    json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, 
-                    timeout=10
-                )
-                if r.status_code == 200:
-                    success = True
-                    log.info(f"✅ Signal sent to chat {chat_id}")
-                else:
-                    log.warning(f"⚠️ Failed to send to {chat_id}: {r.status_code}")
-            except Exception as e:
-                log.error(f"❌ Error sending to {chat_id}: {e}")
-    
-        if success:
-            self.record_signal(s.symbol)
-    
-        return success
+        # Send to the single chat ID
+        try:
+            r = requests.post(
+                self._url, 
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, 
+                timeout=10
+            )
+            if r.status_code == 200:
+                log.info(f"✅ Signal sent to chat {TELEGRAM_CHAT_ID}")
+                self.record_signal(s.symbol)
+                return True
+            else:
+                log.warning(f"⚠️ Failed to send: {r.status_code}")
+                return False
+        except Exception as e:
+            log.error(f"❌ Error sending: {e}")
+            return False
 
 
 # =============================================================================
@@ -1871,6 +1941,18 @@ class TelegramNotifier:
 # =============================================================================
 class EnhancedTCTScanner:
     def __init__(self):
+        if not OANDA_AVAILABLE:
+            raise ImportError("oandapyV20 not installed. Run: pip install oandapyV20")
+        
+        if OANDA_API_KEY == "YOUR_OANDA_API_KEY_HERE":
+            log.error("=" * 60)
+            log.error("ERROR: You must set your OANDA API credentials!")
+            log.error("Edit the script and set:")
+            log.error("  OANDA_API_KEY = 'your-api-key-here'")
+            log.error("  OANDA_ACCOUNT_ID = 'your-account-id-here'")
+            log.error("=" * 60)
+            raise ValueError("OANDA credentials not configured")
+        
         self.data = DataFetcher()
         self.tct = EnhancedTCTAnalyzer()
         self.tg = TelegramNotifier()
@@ -1880,10 +1962,17 @@ class EnhancedTCTScanner:
     
     def _banner(self):
         print("\n" + "=" * 80)
-        print("  ENHANCED PURE TCT BOT - ALL ADVANCED CONCEPTS INTEGRATED")
+        print("  ENHANCED PURE TCT BOT - OANDA VERSION")
         print("=" * 80)
         print("  ORIGINAL LECTURES 1-8: 100% PRESERVED")
         print("  ADVANCED PDF CONCEPTS: FULLY INTEGRATED")
+        print("=" * 80)
+        print("  ASSETS SCANNED:")
+        print("  ✅ Forex: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, etc.")
+        print("  ✅ Indices: SPX500, NAS100, UK100, GER30")
+        print("  ✅ Metals: Gold (XAU/USD), Silver (XAG/USD)")
+        print("  ✅ Commodities: Copper, Platinum")
+        print("  ✅ Oil: Brent Crude, WTI Crude")
         print("=" * 80)
         print("  ✅ Levels 1,2,3 | QRZ (Primary/Internal) | 4-Variable Checklist")
         print("  ✅ EHP Detection | Test Phase | Extended Tap | Correct Tab One")
@@ -1913,24 +2002,26 @@ class EnhancedTCTScanner:
             if not ltf_data:
                 return None
             
-            clean_symbol = symbol.replace('/USDT', '')
+            # Clean symbol for display (remove underscore)
+            clean_symbol = symbol.replace('_', '/')
             return self.tct.analyze(clean_symbol, df_4h, ltf_data)
             
         except Exception as e:
+            log.debug(f"Error analyzing {symbol}: {e}")
             return None
     
     def run_once(self):
         self._cycle += 1
         ts = datetime.now().strftime("%H:%M:%S")
         
-        coins = self.data.get_all_altcoins()
+        instruments = self.data.get_all_instruments()
         print(f"\n{'─' * 60}")
-        print(f"🔄 CYCLE #{self._cycle} [{ts}] | Scanning {len(coins)} coins")
+        print(f"🔄 CYCLE #{self._cycle} [{ts}] | Scanning {len(instruments)} instruments")
         print(f"   🎯 Filter: A+ and A setups only")
         
         found = []
-        for symbol in coins:
-            signal = self._analyze_symbol(symbol)
+        for instrument in instruments:
+            signal = self._analyze_symbol(instrument)
             if signal:
                 # ========== EASY FILTER - JUST 3 CHECKS ==========
                 # 1. Skip if confidence less than 90%
@@ -1967,15 +2058,14 @@ class EnhancedTCTScanner:
                 self.tg.send_signal(signal)
     
     def run(self):
-        # Send startup message to BOTH chats
-        startup_msg = "🚀 <b>ENHANCED BOT STARTED</b>\n\n✅ Original Lectures 1-8 (100%)\n✅ Advanced PDF Concepts (100%)\n✅ Levels 1-3, Phase\n✅ Context Grading A+ to C\n\n🎯 <b>ONLY A+ and A SETUPS SENT</b>\n\n🔔 Waiting for high-grade signals..."
+        # Send startup message
+        startup_msg = "🚀 <b>ENHANCED BOT STARTED (OANDA VERSION)</b>\n\n✅ Original Lectures 1-8 (100%)\n✅ Advanced PDF Concepts (100%)\n✅ Levels 1-3, Phase\n✅ Context Grading A+ to C\n\n📊 Instruments: Forex, Indices, Metals, Commodities, Oil\n\n🎯 <b>ONLY A+ and A SETUPS SENT</b>\n\n🔔 Waiting for high-grade signals..."
     
-        for chat_id in TELEGRAM_CHAT_IDS:
-            try:
-                requests.post(self.tg._url, json={"chat_id": chat_id, "text": startup_msg, "parse_mode": "HTML"}, timeout=10)
-                log.info(f"✅ Startup message sent to chat {chat_id}")
-            except Exception as e:
-                log.error(f"❌ Failed to send startup message to {chat_id}: {e}")
+        try:
+            requests.post(self.tg._url, json={"chat_id": TELEGRAM_CHAT_ID, "text": startup_msg, "parse_mode": "HTML"}, timeout=10)
+            log.info(f"✅ Startup message sent to chat {TELEGRAM_CHAT_ID}")
+        except Exception as e:
+            log.error(f"❌ Failed to send startup message: {e}")
     
         while True:
             try:
@@ -1993,5 +2083,30 @@ class EnhancedTCTScanner:
 # MAIN
 # =============================================================================
 if __name__ == "__main__":
+    # Check if OANDA is available
+    if not OANDA_AVAILABLE:
+        print("\n" + "=" * 60)
+        print("ERROR: oandapyV20 not installed!")
+        print("Run: pip install oandapyV20")
+        print("=" * 60)
+        exit(1)
+    
+    # Check if credentials are set
+    if OANDA_API_KEY == "YOUR_OANDA_API_KEY_HERE" or OANDA_ACCOUNT_ID == "YOUR_OANDA_ACCOUNT_ID_HERE":
+        print("\n" + "=" * 60)
+        print("ERROR: OANDA credentials not configured!")
+        print("Please edit the script and set:")
+        print("  OANDA_API_KEY = 'your-api-key-here'")
+        print("  OANDA_ACCOUNT_ID = 'your-account-id-here'")
+        print("=" * 60)
+        print("\nTo get OANDA API credentials:")
+        print("1. Go to https://www.oanda.com")
+        print("2. Create a free demo account")
+        print("3. Go to 'Manage API Access'")
+        print("4. Create a new API token")
+        print("5. Copy the token and account ID into the script")
+        print("=" * 60)
+        exit(1)
+    
     scanner = EnhancedTCTScanner()
-    scanner.run() 
+    scanner.run()
