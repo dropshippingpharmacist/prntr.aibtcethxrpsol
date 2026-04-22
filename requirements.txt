@@ -1,9 +1,17 @@
-# requirements.txt - COMPATIBLE WITH PYTHON 3.13
-ccxt==4.3.22
-pandas==2.2.3  # Updated to version compatible with Python 3.13
+# requirements.txt - FOR OANDA VERSION
+
+# OANDA API (REQUIRED)
+oandapyV20==0.6.3
+
+# Data Processing
+pandas==2.2.3
 numpy==2.0.1
-python-telegram-bot==21.10
+
+# Scientific Computing (for find_peaks, stats)
 scipy==1.14.1
-aiohttp==3.9.5
+
+# HTTP Requests (Telegram)
+requests==2.31.0
+
+# Optional but recommended
 python-dotenv==1.0.1
-yfinance==0.2.40
