@@ -119,6 +119,7 @@ import ccxt
 import yfinance as yf
 from scipy.signal import find_peaks
 from scipy import stats
+from fake_useragent import UserAgent
 
 warnings.filterwarnings("ignore")
 
@@ -126,8 +127,8 @@ warnings.filterwarnings("ignore")
 # CONFIGURATION
 # =============================================================================
 TELEGRAM_BOT_TOKEN = "8013335919:AAHCzQWVwP2Jsv0klNtTzF7qUX6PuD_gYZ0"
-TELEGRAM_CHAT_ID = "5747777199"  # Original (kept for compatibility)
-TELEGRAM_CHAT_IDS = ["5747777199", "-1002841352895"]  # Both chats
+TELEGRAM_CHAT_ID = "5747777199"
+TELEGRAM_CHAT_IDS = ["5747777199", "-1002841352895"]
 
 EXCHANGE_NAME = "bitget"
 MIN_VOLUME_USD = 100000
@@ -142,36 +143,27 @@ MIN_RR = 2.0
 SIGNAL_COOLDOWN_MINUTES = 1800000
 MAX_SIGNALS_PER_DAY = 30
 
-# Range Duration (Section 8.4 - Variable 2)
 MIN_RANGE_DURATION_HOURS = 24
-DAILY_RANGE_MIN_HOURS = 15  # Exception C.6
+DAILY_RANGE_MIN_HOURS = 15
 
-# =============================================================================
-# ASSET CONFIGURATION
-# =============================================================================
+# Asset Configuration
 ENABLE_CRYPTO = True
 ENABLE_FOREX = True
 ENABLE_STOCKS = True
 
-# Forex pairs (Yahoo Finance format - will add =X suffix automatically)
 FOREX_SYMBOLS = [
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
-    "NZDUSD", "USDCHF", "EURGBP", "EURAUD", "GBPJPY",
-    "AUDJPY", "CADJPY", "CHFJPY", "EURJPY", "GBPAUD"
+    "NZDUSD", "USDCHF", "EURGBP", "EURAUD", "GBPJPY"
 ]
 
-# Stock symbols (Yahoo Finance format)
 STOCK_SYMBOLS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
-    "JPM", "V", "WMT", "JNJ", "PG", "UNH", "HD", "DIS", "MA",
-    "BAC", "NFLX", "ADBE", "CRM", "AMD", "INTC", "PEP", "KO"
+    "JPM", "V", "WMT", "JNJ", "PG", "HD", "DIS"
 ]
 
-# Crypto symbols (for CCXT)
 CRYPTO_SYMBOLS = [
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
-    "DOGE/USDT", "ADA/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT",
-    "MATIC/USDT", "UNI/USDT", "ATOM/USDT", "LTC/USDT", "ETC/USDT"
+    "DOGE/USDT", "ADA/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT"
 ]
 
 logging.basicConfig(
@@ -180,7 +172,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(), logging.FileHandler("enhanced_tct_bot.log")]
 )
 log = logging.getLogger("EnhancedTCT")
-
 
 # =============================================================================
 # ENUMS
@@ -233,7 +224,6 @@ class BreakerQuality(Enum):
     MODERATE = "Moderate"
     WEAK = "Weak"
 
-
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
@@ -246,14 +236,11 @@ def safe_float(val) -> float:
         return float(val[0]) if len(val) > 0 else 0.0
     return float(val) if isinstance(val, (int, float, np.number)) else 0.0
 
-
 def is_inside_bar(current: pd.Series, previous: pd.Series) -> bool:
     return (current['high'] <= previous['high'] and 
             current['low'] >= previous['low'])
 
-
 def six_candle_rule(df: pd.DataFrame, start_idx: int) -> Tuple[bool, str]:
-    """LECTURE 1: 2-2-2 Rule"""
     if start_idx + 6 > len(df):
         return False, "none"
     
@@ -295,7 +282,6 @@ def six_candle_rule(df: pd.DataFrame, start_idx: int) -> Tuple[bool, str]:
     
     return False, "none"
 
-
 def find_swing_points(df: pd.DataFrame, lookback: int = 3) -> Tuple[List[float], List[int], List[float], List[int]]:
     highs = df['high'].values
     lows = df['low'].values
@@ -316,9 +302,7 @@ def find_swing_points(df: pd.DataFrame, lookback: int = 3) -> Tuple[List[float],
     
     return swing_highs, swing_high_idx, swing_lows, swing_low_idx
 
-
 def calculate_range_duration_hours(df: pd.DataFrame, start_idx: int, end_idx: int) -> float:
-    """Section 8.4 - Variable 2: Calculate range duration in hours"""
     if start_idx >= end_idx or start_idx < 0 or end_idx >= len(df):
         return 0.0
     
@@ -332,9 +316,8 @@ def calculate_range_duration_hours(df: pd.DataFrame, start_idx: int, end_idx: in
     
     return (end_time - start_time).total_seconds() / 3600.0
 
-
 # =============================================================================
-# LECTURE 2: RANGE DETECTION (ENHANCED)
+# LECTURE 2: RANGE DETECTION
 # =============================================================================
 @dataclass
 class ValidatedRange:
@@ -361,10 +344,7 @@ class ValidatedRange:
     def is_in_discount(self, price: float) -> bool:
         return price < self.equilibrium
 
-
 class RangeDetector:
-    """LECTURE 2 + Section 8.4 Variable 2: Range detection with duration"""
-    
     @staticmethod
     def detect(df: pd.DataFrame) -> Optional[ValidatedRange]:
         if len(df) < 30:
@@ -444,9 +424,8 @@ class RangeDetector:
         
         return best_range
 
-
 # =============================================================================
-# LECTURE 3: SUPPLY & DEMAND (ENHANCED)
+# LECTURE 3: SUPPLY & DEMAND
 # =============================================================================
 @dataclass
 class OrderBlock:
@@ -461,10 +440,7 @@ class OrderBlock:
     is_market_maker: bool = False
     timeframe: str = ""
 
-
 class SupplyDemandDetector:
-    """LECTURE 3 + Section 8.4: Enhanced S&D detection"""
-    
     @staticmethod
     def has_fvg(df: pd.DataFrame, idx: int) -> bool:
         if idx < 1 or idx + 1 >= len(df):
@@ -485,7 +461,6 @@ class SupplyDemandDetector:
             c = df.iloc[i-1]
             n = df.iloc[i]
             
-            # Bullish OB (Demand)
             if c['close'] < c['open'] and n['close'] > n['open'] and n['close'] > c['high']:
                 fvg = SupplyDemandDetector.has_fvg(df, i-1)
                 if fvg:
@@ -493,10 +468,8 @@ class SupplyDemandDetector:
                     if valid_range:
                         ob.location = "discount" if float(c['low']) < valid_range.equilibrium else "premium"
                     
-                    # Section 8.4: Check if at pivot
                     ob.at_pivot = any(abs(i - idx) < 3 for idx in low_idx)
                     
-                    # Check if swept liquidity first (price wicked below then reversed)
                     if i > 2:
                         prev_low = df['low'].iloc[i-2]
                         if c['low'] < prev_low:
@@ -504,7 +477,6 @@ class SupplyDemandDetector:
                     
                     obs.append(ob)
             
-            # Bearish OB (Supply)
             if c['close'] > c['open'] and n['close'] < n['open'] and n['close'] < c['low']:
                 fvg = SupplyDemandDetector.has_fvg(df, i-1)
                 if fvg:
@@ -521,7 +493,6 @@ class SupplyDemandDetector:
                     
                     obs.append(ob)
         
-        # Mark extreme blocks
         demand_blocks = [ob for ob in obs if ob.direction == "demand"]
         supply_blocks = [ob for ob in obs if ob.direction == "supply"]
         if demand_blocks:
@@ -533,23 +504,20 @@ class SupplyDemandDetector:
     
     @staticmethod
     def rank_ob_quality(ob: OrderBlock) -> int:
-        """Section 8.4: Rank S&D by location and action"""
         score = 0
         if ob.at_pivot and ob.swept_liquidity_first:
-            score = 3  # Best: Macro pivot + liquidity sweep
+            score = 3
         elif ob.at_pivot:
-            score = 2  # Good: Pivot point
+            score = 2
         else:
-            score = 1  # Insignificant: Within expansion
+            score = 1
         return score
-
 
 # =============================================================================
 # SECTION 8.2: QUALITY RETURN TO ZONE (QRZ) ANALYSIS
 # =============================================================================
 @dataclass
 class QRZAnalysis:
-    """Section 8.2: Complete Quality Return to Zone analysis"""
     primary_highs_aligned: bool
     internal_highs_stacked: bool
     liquidity_targets: int
@@ -559,10 +527,7 @@ class QRZAnalysis:
     is_aggressive_final_move: bool
     regenerated_liquidity: bool
 
-
 class QRZAnalyzer:
-    """Section 8.2: Quality Return to Zone detection"""
-    
     @staticmethod
     def analyze(df: pd.DataFrame, valid_range: ValidatedRange, 
                 direction: str) -> QRZAnalysis:
@@ -670,13 +635,11 @@ class QRZAnalyzer:
         
         return recent_volatility < older_volatility * 0.7
 
-
 # =============================================================================
 # SECTION 8.1: LEVELS 1, 2, 3 ANALYSIS
 # =============================================================================
 @dataclass
 class LevelStructure:
-    """Section 8.1: Levels 1, 2, 3 framework"""
     level1_trend: str
     level2_counter: str
     level3_refined: str
@@ -685,15 +648,11 @@ class LevelStructure:
     level2_broken: bool
     level3_broken: bool
 
-
 class LevelAnalyzer:
-    """Section 8.1: Domino Effect and pivot confirmation"""
-    
     @staticmethod
     def analyze(df_4h: pd.DataFrame, df_1h: pd.DataFrame, 
                 df_15m: pd.DataFrame) -> LevelStructure:
         
-        # Level 1: Primary trend on 4h
         highs_4h, _, lows_4h, _ = find_swing_points(df_4h, lookback=3)
         if len(highs_4h) >= 2 and len(lows_4h) >= 2:
             l1_trend = "up" if highs_4h[-1] > highs_4h[-2] and lows_4h[-1] > lows_4h[-2] else \
@@ -701,7 +660,6 @@ class LevelAnalyzer:
         else:
             l1_trend = "flat"
         
-        # Level 2: Counter-trend on 1h
         highs_1h, _, lows_1h, _ = find_swing_points(df_1h, lookback=2)
         if len(highs_1h) >= 2 and len(lows_1h) >= 2:
             l2_trend = "up" if highs_1h[-1] > highs_1h[-2] and lows_1h[-1] > lows_1h[-2] else \
@@ -709,7 +667,6 @@ class LevelAnalyzer:
         else:
             l2_trend = "flat"
         
-        # Level 3: Refined on 15m
         highs_15m, _, lows_15m, _ = find_swing_points(df_15m, lookback=2)
         if len(highs_15m) >= 2 and len(lows_15m) >= 2:
             l3_trend = "up" if highs_15m[-1] > highs_15m[-2] and lows_15m[-1] > lows_15m[-2] else \
@@ -717,7 +674,6 @@ class LevelAnalyzer:
         else:
             l3_trend = "flat"
         
-        # Check breaks
         current_15m = float(df_15m['close'].iloc[-1])
         level3_broken = (l3_trend == "down" and current_15m > highs_15m[-2]) if len(highs_15m) >= 2 else False
         
@@ -737,7 +693,6 @@ class LevelAnalyzer:
             level3_broken=level3_broken
         )
 
-
 # =============================================================================
 # LECTURE 4: LIQUIDITY
 # =============================================================================
@@ -752,10 +707,7 @@ class LiquidityGrab:
     is_target: bool = False
     is_grab: bool = True
 
-
 class LiquidityDetector:
-    """LECTURE 4 + Section 8.2: Liquidity with target vs grab distinction"""
-    
     @staticmethod
     def detect_grabs(df: pd.DataFrame, valid_range: Optional[ValidatedRange] = None) -> List[LiquidityGrab]:
         grabs = []
@@ -816,7 +768,6 @@ class LiquidityDetector:
         quality = 0.50 - (obstacles * 0.12) + (liq_in_path * 0.08)
         return min(0.95, max(0.20, quality))
 
-
 # =============================================================================
 # LECTURE 1: MARKET STRUCTURE
 # =============================================================================
@@ -831,10 +782,7 @@ class MarketStructure:
     domino_complete: bool = False
     breaker_quality: BreakerQuality = BreakerQuality.MODERATE
 
-
 class MarketStructureAnalyzer:
-    """LECTURE 1 + Section 8.4 Variable 4: Breaker quality assessment"""
-    
     @staticmethod
     def analyze(df: pd.DataFrame, valid_range: Optional[ValidatedRange] = None) -> MarketStructure:
         ms = MarketStructure()
@@ -865,7 +813,6 @@ class MarketStructureAnalyzer:
             if valid_range:
                 ms.bos_inside_range = (valid_range.low <= last_high <= valid_range.high)
             
-            # Section 8.4 Variable 4: Assess breaker quality
             ms.breaker_quality = MarketStructureAnalyzer._assess_breaker(df, "bullish")
         
         elif ms.trend == "down" and current_price < last_low:
@@ -886,7 +833,6 @@ class MarketStructureAnalyzer:
     
     @staticmethod
     def _assess_breaker(df: pd.DataFrame, direction: str) -> BreakerQuality:
-        """Section 8.4 Variable 4: Quality breaker assessment"""
         if len(df) < 5:
             return BreakerQuality.MODERATE
         
@@ -913,20 +859,16 @@ class MarketStructureAnalyzer:
         
         return BreakerQuality.MODERATE
 
-
 # =============================================================================
 # SECTION E: CONTEXT BUILDING
 # =============================================================================
 class ContextBuilder:
-    """Section E: Complete context ranking system"""
-    
     @staticmethod
     def determine_context(df: pd.DataFrame, valid_range: ValidatedRange, 
                           direction: str) -> ContextRank:
         
         current_price = float(df['close'].iloc[-1])
         
-        # Foundation Rules
         at_premium = current_price > valid_range.equilibrium
         at_discount = current_price < valid_range.equilibrium
         
@@ -937,11 +879,9 @@ class ContextBuilder:
         else:
             base = ContextRank.SEMI_COUNTER
         
-        # Check for Pro context boosters
         highs, _, lows, _ = find_swing_points(df, lookback=3)
         
         if direction == "short":
-            # Check for Bread & Butter setup
             if len(lows) >= 2 and lows[-2] < lows[-1]:
                 recent_low = df['low'].iloc[-20:].min()
                 if recent_low < valid_range.low * 0.95:
@@ -957,20 +897,16 @@ class ContextBuilder:
     @staticmethod
     def grade_setup(major_context: ContextRank, altcoin_context: ContextRank,
                     is_ehp: bool = False, has_test_phase: bool = False) -> SetupGrade:
-        """Section E: A+ to C grading system"""
         
-        # EHP is always A+ if context is at least Semi-Pro
         if is_ehp and major_context in [ContextRank.PRO, ContextRank.SEMI_PRO]:
             return SetupGrade.A_PLUS
         
-        # Test phase boosts grade
         if has_test_phase:
             if major_context == ContextRank.PRO:
                 return SetupGrade.A_PLUS
             elif major_context == ContextRank.SEMI_PRO:
                 return SetupGrade.A
         
-        # Standard grading
         if major_context == ContextRank.PRO:
             if altcoin_context in [ContextRank.PRO, ContextRank.SEMI_PRO]:
                 return SetupGrade.A_PLUS
@@ -988,13 +924,11 @@ class ContextBuilder:
         else:
             return SetupGrade.C
 
-
 # =============================================================================
 # ENHANCED TCT SIGNAL
 # =============================================================================
 @dataclass
 class EnhancedTCTSignal:
-    """Complete TCT signal with all advanced concepts"""
     symbol: str
     direction: Direction
     model: TCTModel
@@ -1014,7 +948,6 @@ class EnhancedTCTSignal:
     tap3: float
     asset_type: AssetType = AssetType.CRYPTO
     
-    # Advanced concepts
     qrz: Optional[QRZAnalysis] = None
     levels: Optional[LevelStructure] = None
     context_rank: ContextRank = ContextRank.NEUTRAL
@@ -1029,13 +962,10 @@ class EnhancedTCTSignal:
     
     timestamp: datetime = field(default_factory=datetime.now)
 
-
 # =============================================================================
 # ENHANCED TCT ANALYZER (MAIN ENGINE)
 # =============================================================================
 class EnhancedTCTAnalyzer:
-    """COMPLETE TCT ANALYSIS WITH ALL ADVANCED CONCEPTS"""
-    
     def __init__(self):
         self.range_detector = RangeDetector()
         self.sd_detector = SupplyDemandDetector()
@@ -1105,7 +1035,6 @@ class EnhancedTCTAnalyzer:
     
     def _detect_ehp(self, df_4h: pd.DataFrame, df_1h: pd.DataFrame, 
                     valid_range: ValidatedRange, direction: str) -> bool:
-        """Section C.1: EHP detection"""
         highs_4h, _, lows_4h, _ = find_swing_points(df_4h, lookback=3)
         highs_1h, _, lows_1h, _ = find_swing_points(df_1h, lookback=2)
         
@@ -1127,7 +1056,6 @@ class EnhancedTCTAnalyzer:
     
     def _detect_test_phase(self, df: pd.DataFrame, valid_range: ValidatedRange, 
                            direction: str) -> Tuple[bool, float]:
-        """Section C.2: Test phase detection for Model One"""
         if direction == "long":
             lows, low_idx = find_swing_points(df, lookback=2)[2:]
             if len(lows) >= 3:
@@ -1175,7 +1103,6 @@ class EnhancedTCTAnalyzer:
         
         position = (risk_amount / sl_pct) * 100 / entry
         
-        # Section C.1: Increased position size for EHP
         if confidence >= 0.88:
             position *= 1.5
         
@@ -1265,14 +1192,12 @@ class EnhancedTCTAnalyzer:
         if len(df_4h) < 50:
             return None
         
-        # Get lower timeframe data for Level analysis
         df_1h = ltf_data.get('1h')
         df_15m = ltf_data.get('15m')
         
         if df_1h is None or df_15m is None:
             return None
         
-        # Step 1: Detect valid range
         valid_range = self.range_detector.detect(df_4h)
         if not valid_range or not valid_range.is_valid:
             return None
@@ -1280,12 +1205,10 @@ class EnhancedTCTAnalyzer:
         if not valid_range.is_good_range:
             return None
         
-        # Step 2: Get supply/demand and liquidity
         obs = self.sd_detector.detect_order_blocks(df_4h, valid_range)
         grabs = self.liq_detector.detect_grabs(df_4h, valid_range)
         rtz = self.liq_detector.rtz_quality(valid_range, obs, grabs)
         
-        # Step 3: Detect deviations
         high_devs, low_devs = self._detect_deviations(df_4h, valid_range)
         
         current_price = float(df_4h['close'].iloc[-1])
@@ -1308,7 +1231,6 @@ class EnhancedTCTAnalyzer:
         bos_return_long, bos_return_tf_long = self._check_bos_return(ltf_data, valid_range, "long")
         bos_return_short, bos_return_tf_short = self._check_bos_return(ltf_data, valid_range, "short")
         
-        # Level Structure Analysis
         levels = self.level_analyzer.analyze(df_4h, df_1h, df_15m)
         
         extras = {
@@ -1322,9 +1244,7 @@ class EnhancedTCTAnalyzer:
             "domino_ready": levels.domino_ready,
         }
         
-        # =====================================================================
         # MODEL 1 DISTRIBUTION
-        # =====================================================================
         if len(high_devs) >= 2 and valid_entry_short and ltf_confirmed_short:
             tap1 = valid_range.high
             tap2 = high_devs[-2]
@@ -1340,16 +1260,9 @@ class EnhancedTCTAnalyzer:
                 rr = reward / risk if risk > 0 else 0
                 
                 if rr >= MIN_RR:
-                    # QRZ Analysis
                     qrz = self.qrz_analyzer.analyze(df_4h, valid_range, "short")
-                    
-                    # Test Phase Detection
                     has_test, test_price = self._detect_test_phase(df_4h, valid_range, "short")
-                    
-                    # EHP Detection
                     is_ehp = self._detect_ehp(df_4h, df_1h, valid_range, "short")
-                    
-                    # Context Building
                     context = self.context_builder.determine_context(df_4h, valid_range, "short")
                     
                     extras["entry_zone_valid"] = valid_entry_short
@@ -1367,7 +1280,6 @@ class EnhancedTCTAnalyzer:
                     
                     confidence = self._calculate_confidence(0.52, extras) + conf_boost_short
                     
-                    # Duration validation (Section 8.4 Variable 2)
                     duration_ok = valid_range.duration_hours >= MIN_RANGE_DURATION_HOURS
                     is_daily_exception = False
                     
@@ -1377,7 +1289,6 @@ class EnhancedTCTAnalyzer:
                             duration_ok = True
                     
                     if confidence >= MIN_CONFIDENCE and duration_ok:
-                        # Determine model
                         if is_ehp:
                             model = TCTModel.EHP_SHORT
                         elif has_test:
@@ -1385,10 +1296,8 @@ class EnhancedTCTAnalyzer:
                         else:
                             model = TCTModel.M1D
                         
-                        # Setup Grade
                         grade = self.context_builder.grade_setup(context, context, is_ehp, has_test)
                         
-                        # Only send A+ and A setups
                         if grade in [SetupGrade.A_PLUS, SetupGrade.A]:
                             ltf_info = f"LTF({best_tf_short})"
                             if bos_return_short:
@@ -1412,9 +1321,7 @@ class EnhancedTCTAnalyzer:
                                 asset_type=asset_type
                             )
         
-        # =====================================================================
         # MODEL 1 ACCUMULATION
-        # =====================================================================
         if len(low_devs) >= 2 and valid_entry_long and ltf_confirmed_long:
             tap1 = valid_range.low
             tap2 = low_devs[-2]
@@ -1491,9 +1398,7 @@ class EnhancedTCTAnalyzer:
                                 asset_type=asset_type
                             )
         
-        # =====================================================================
         # MODEL 2 DISTRIBUTION
-        # =====================================================================
         if len(high_devs) == 1 and valid_entry_short and ltf_confirmed_short:
             tap1 = valid_range.high
             tap2 = high_devs[0]
@@ -1563,9 +1468,7 @@ class EnhancedTCTAnalyzer:
                                     asset_type=asset_type
                                 )
         
-        # =====================================================================
         # MODEL 2 ACCUMULATION
-        # =====================================================================
         if len(low_devs) == 1 and valid_entry_long and ltf_confirmed_long:
             tap1 = valid_range.low
             tap2 = low_devs[0]
@@ -1635,9 +1538,7 @@ class EnhancedTCTAnalyzer:
                                     asset_type=asset_type
                                 )
         
-        # =====================================================================
         # PO3 BULLISH
-        # =====================================================================
         if rtz > 0.45 and len(low_devs) >= 1 and ltf_confirmed_long:
             manip_low = min(low_devs[-1] if low_devs else valid_range.low, 
                            df_4h['low'].iloc[-20:].min())
@@ -1681,9 +1582,7 @@ class EnhancedTCTAnalyzer:
                                     asset_type=asset_type
                                 )
         
-        # =====================================================================
         # PO3 BEARISH
-        # =====================================================================
         if rtz > 0.45 and len(high_devs) >= 1 and ltf_confirmed_short:
             manip_high = max(high_devs[-1] if high_devs else valid_range.high,
                             df_4h['high'].iloc[-20:].max())
@@ -1727,118 +1626,73 @@ class EnhancedTCTAnalyzer:
                                     asset_type=asset_type
                                 )
         
-        # =====================================================================
-        # TWO-TAP EXCEPTIONS
-        # =====================================================================
-        if len(high_devs) == 1 and rtz > 0.55 and valid_entry_short and ltf_confirmed_short:
-            entry = current_price
-            stop = entry * 1.015
-            target = valid_range.low
-            risk = abs(entry - stop)
-            reward = abs(target - entry)
-            rr = reward / risk if risk > 0 else 0
-            
-            if rr >= MIN_RR:
-                qrz = self.qrz_analyzer.analyze(df_4h, valid_range, "short")
-                extras["valid_qrz"] = qrz.is_valid_qrz
-                confidence = self._calculate_confidence(0.45, extras) + conf_boost_short
-                
-                if confidence >= MIN_CONFIDENCE:
-                    return EnhancedTCTSignal(
-                        symbol=symbol, direction=Direction.SHORT, model=TCTModel.TWO_TAP_SHORT,
-                        entry=entry, stop=stop, target=target, rr=rr,
-                        tp1=entry - (entry - target) * 0.50,
-                        tp2=entry - (entry - target) * 0.75,
-                        tp3=target,
-                        confidence=confidence,
-                        position_size=self._calc_position(entry, stop, confidence),
-                        reason=f"Two-Tap Short | RTZ={rtz:.2f}",
-                        valid_range=valid_range, tap1=valid_range.high, tap2=high_devs[0], tap3=current_price,
-                        qrz=qrz, range_duration_hours=valid_range.duration_hours,
-                        asset_type=asset_type
-                    )
-        
-        if len(low_devs) == 1 and rtz > 0.55 and valid_entry_long and ltf_confirmed_long:
-            entry = current_price
-            stop = entry * 0.985
-            target = valid_range.high
-            risk = abs(entry - stop)
-            reward = abs(target - entry)
-            rr = reward / risk if risk > 0 else 0
-            
-            if rr >= MIN_RR:
-                qrz = self.qrz_analyzer.analyze(df_4h, valid_range, "long")
-                extras["valid_qrz"] = qrz.is_valid_qrz
-                confidence = self._calculate_confidence(0.45, extras) + conf_boost_long
-                
-                if confidence >= MIN_CONFIDENCE:
-                    return EnhancedTCTSignal(
-                        symbol=symbol, direction=Direction.LONG, model=TCTModel.TWO_TAP_LONG,
-                        entry=entry, stop=stop, target=target, rr=rr,
-                        tp1=entry + (target - entry) * 0.50,
-                        tp2=entry + (target - entry) * 0.75,
-                        tp3=target,
-                        confidence=confidence,
-                        position_size=self._calc_position(entry, stop, confidence),
-                        reason=f"Two-Tap Long | RTZ={rtz:.2f}",
-                        valid_range=valid_range, tap1=valid_range.low, tap2=low_devs[0], tap3=current_price,
-                        qrz=qrz, range_duration_hours=valid_range.duration_hours,
-                        asset_type=asset_type
-                    )
-        
         return None
 
-
 # =============================================================================
-# DATA FETCHER - MULTI-ASSET (CRYPTO, FOREX, STOCKS)
+# DATA FETCHER - MULTI-ASSET WITH FIXED YAHOO FINANCE
 # =============================================================================
 class MultiAssetDataFetcher:
-    """Fetches data for crypto (CCXT), forex (yfinance), and stocks (yfinance)"""
-    
     def __init__(self):
-        # Crypto exchange
         self.crypto_exchange = ccxt.bitget({
             'enableRateLimit': True,
             'timeout': 30000,
             'options': {'defaultType': 'spot'}
         })
         
-        # Cache for all asset types
+        self._setup_yfinance()
+        
         self._cache: Dict[str, Tuple[pd.DataFrame, float]] = {}
         self._ttl = 180
         
-        # Symbol lists by type
         self.crypto_symbols = CRYPTO_SYMBOLS
         self.forex_symbols = FOREX_SYMBOLS
         self.stock_symbols = STOCK_SYMBOLS
+        
+        self._last_yahoo_request = 0
+        self._yahoo_delay = 0.5
+        
+        self.ua = UserAgent()
+    
+    def _setup_yfinance(self):
+        self.yf_session = requests.Session()
+        self.yf_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        })
+        yf.set_tz_cache_location(None)
+    
+    def _rate_limit(self):
+        now = time.time()
+        elapsed = now - self._last_yahoo_request
+        if elapsed < self._yahoo_delay:
+            time.sleep(self._yahoo_delay - elapsed)
+        self._last_yahoo_request = time.time()
     
     def fetch_ohlcv(self, symbol: str, timeframe: str = "4h", 
                     limit: int = 200, asset_type: AssetType = AssetType.CRYPTO) -> pd.DataFrame:
-        """Fetch OHLCV data for any asset type"""
         cache_key = f"{symbol}_{timeframe}_{limit}_{asset_type.value}"
         
-        # Check cache
         if cache_key in self._cache:
             df, timestamp = self._cache[cache_key]
             if time.time() - timestamp < self._ttl:
                 return df.copy()
         
-        # Fetch based on asset type
         if asset_type == AssetType.CRYPTO:
             df = self._fetch_crypto(symbol, timeframe, limit)
         elif asset_type == AssetType.FOREX:
-            df = self._fetch_forex(symbol, timeframe, limit)
-        else:  # STOCK
-            df = self._fetch_stock(symbol, timeframe, limit)
+            df = self._fetch_forex_yahoo(symbol, timeframe, limit)
+        else:
+            df = self._fetch_stock_yahoo(symbol, timeframe, limit)
         
-        # Cache if not empty
         if not df.empty:
             self._cache[cache_key] = (df.copy(), time.time())
         
         return df
     
     def _fetch_crypto(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-        """Fetch crypto data via CCXT"""
         tf_map = {'5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h'}
         
         try:
@@ -1859,104 +1713,96 @@ class MultiAssetDataFetcher:
             log.debug(f"Crypto fetch error {symbol}: {e}")
             return pd.DataFrame()
     
-    def _fetch_forex(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-        """Fetch forex data via Yahoo Finance (adds =X suffix automatically)"""
+    def _fetch_forex_yahoo(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
         yf_symbol = f"{symbol}=X"
         
-        # Map timeframe to yfinance interval and calculate period
         interval, period = self._get_yf_params(timeframe, limit)
         
-        try:
-            ticker = yf.Ticker(yf_symbol)
-            df = ticker.history(period=period, interval=interval)
-            
-            if df.empty:
-                return pd.DataFrame()
-            
-            # Standardize column names
-            df.columns = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'splits']
-            df = df[['open', 'high', 'low', 'close', 'volume']]
-            
-            # Resample 4h if needed (yfinance doesn't have native 4h)
-            if timeframe == '4h' and interval == '1h':
-                df = df.resample('4H').agg({
-                    'open': 'first',
-                    'high': 'max',
-                    'low': 'min',
-                    'close': 'last',
-                    'volume': 'sum'
-                }).dropna()
-                if len(df) > limit:
-                    df = df.iloc[-limit:]
-            
-            return df
-            
-        except Exception as e:
-            log.debug(f"Forex fetch error {symbol}: {e}")
-            return pd.DataFrame()
+        for attempt in range(3):
+            try:
+                self._rate_limit()
+                
+                self.yf_session.headers.update({'User-Agent': self.ua.random})
+                
+                ticker = yf.Ticker(yf_symbol, session=self.yf_session)
+                df = ticker.history(period=period, interval=interval, prepost=False)
+                
+                if not df.empty and len(df) > 5:
+                    df.columns = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'splits']
+                    df = df[['open', 'high', 'low', 'close', 'volume']]
+                    df = df.dropna()
+                    
+                    if timeframe == '4h' and interval == '1h':
+                        df = df.resample('4H').agg({
+                            'open': 'first', 'high': 'max',
+                            'low': 'min', 'close': 'last', 'volume': 'sum'
+                        }).dropna()
+                        if len(df) > limit:
+                            df = df.iloc[-limit:]
+                    
+                    return df
+                    
+            except Exception as e:
+                log.debug(f"Forex attempt {attempt+1} failed: {e}")
+                time.sleep(1)
+        
+        return pd.DataFrame()
     
-    def _fetch_stock(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
-        """Fetch stock data via Yahoo Finance"""
-        # Map timeframe to yfinance interval and calculate period
+    def _fetch_stock_yahoo(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
         interval, period = self._get_yf_params(timeframe, limit)
         
-        try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(period=period, interval=interval)
-            
-            if df.empty:
-                return pd.DataFrame()
-            
-            # Standardize column names
-            df.columns = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'splits']
-            df = df[['open', 'high', 'low', 'close', 'volume']]
-            
-            # Resample 4h if needed
-            if timeframe == '4h' and interval == '1h':
-                df = df.resample('4H').agg({
-                    'open': 'first',
-                    'high': 'max',
-                    'low': 'min',
-                    'close': 'last',
-                    'volume': 'sum'
-                }).dropna()
-                if len(df) > limit:
-                    df = df.iloc[-limit:]
-            
-            return df
-            
-        except Exception as e:
-            log.debug(f"Stock fetch error {symbol}: {e}")
-            return pd.DataFrame()
+        for attempt in range(3):
+            try:
+                self._rate_limit()
+                
+                self.yf_session.headers.update({'User-Agent': self.ua.random})
+                
+                ticker = yf.Ticker(symbol, session=self.yf_session)
+                df = ticker.history(period=period, interval=interval, prepost=False)
+                
+                if not df.empty and len(df) > 5:
+                    df.columns = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'splits']
+                    df = df[['open', 'high', 'low', 'close', 'volume']]
+                    df = df.dropna()
+                    
+                    if timeframe == '4h' and interval == '1h':
+                        df = df.resample('4H').agg({
+                            'open': 'first', 'high': 'max',
+                            'low': 'min', 'close': 'last', 'volume': 'sum'
+                        }).dropna()
+                        if len(df) > limit:
+                            df = df.iloc[-limit:]
+                    
+                    return df
+                    
+            except Exception as e:
+                log.debug(f"Stock attempt {attempt+1} failed: {e}")
+                time.sleep(1)
+        
+        return pd.DataFrame()
     
     def _get_yf_params(self, timeframe: str, limit: int) -> Tuple[str, str]:
-        """Get yfinance interval and period parameters"""
-        # Map timeframe to yfinance interval
-        tf_map = {
-            '5m': '5m',
-            '15m': '15m',
-            '30m': '30m',
-            '1h': '1h',
-            '4h': '1h',  # Will resample
-            '1d': '1d',
-        }
+        tf_map = {'5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '1h', '1d': '1d'}
         interval = tf_map.get(timeframe, '1h')
         
-        # Calculate period based on limit
         multiplier = {'5m': 5, '15m': 15, '30m': 30, '1h': 60, '1d': 1440}.get(interval, 60)
         minutes_needed = multiplier * limit
         hours_needed = minutes_needed / 60
         
-        if hours_needed < 48:
-            period = f"{max(int(hours_needed), 1)}h"
+        if timeframe == '5m':
+            period = f"{min(max(int(hours_needed), 1), 7)}d"
+        elif timeframe in ['15m', '30m']:
+            period = f"{min(max(int(hours_needed), 1), 14)}d"
+        elif timeframe == '1h':
+            period = f"{min(max(int(hours_needed), 1), 30)}d"
+        elif timeframe == '4h':
+            period = f"{min(max(int(hours_needed * 4), 1), 60)}d"
         else:
-            days_needed = int(hours_needed / 24) + 2
-            period = f"{days_needed}d"
+            period = f"{min(max(int(hours_needed), 1), 365)}d"
         
         return interval, period
     
     def get_all_symbols(self) -> List[Tuple[str, AssetType]]:
-        """Get all symbols to scan with their asset types"""
         all_symbols = []
         
         if ENABLE_CRYPTO:
@@ -1972,7 +1818,6 @@ class MultiAssetDataFetcher:
                 all_symbols.append((sym, AssetType.STOCK))
         
         return all_symbols
-
 
 # =============================================================================
 # TELEGRAM NOTIFIER
@@ -1990,7 +1835,7 @@ class TelegramNotifier:
             if p < 1:
                 return f"{p:.5f}"
             return f"{p:.4f}"
-        else:  # CRYPTO
+        else:
             if p > 1000:
                 return f"${p:,.2f}"
             elif p > 1:
@@ -2013,10 +1858,9 @@ class TelegramNotifier:
     
     def send_signal(self, s: EnhancedTCTSignal) -> bool:
         if not self.can_send(s.symbol):
-            log.info(f"⏳ Signal skipped for {s.symbol} (cooldown/daily limit)")
+            log.info(f"⏳ Signal skipped for {s.symbol}")
             return False
 
-        # Extract LTF from reason string
         ltf = "Unknown"
         if 'LTF(' in s.reason:
             import re
@@ -2024,20 +1868,14 @@ class TelegramNotifier:
             if match:
                 ltf = match.group(1)
         
-        # Asset type emoji
         asset_emoji = {
             AssetType.CRYPTO: "🪙",
             AssetType.FOREX: "💱",
             AssetType.STOCK: "📈"
         }.get(s.asset_type, "🪙")
         
-        # Direction text and emoji
-        if s.direction == Direction.LONG:
-            direction_text = "🟢 LONG"
-        else:
-            direction_text = "🔴 SHORT"
+        direction_text = "🟢 LONG" if s.direction == Direction.LONG else "🔴 SHORT"
         
-        # Format price based on asset type
         entry_fmt = self._format_price(s.entry, s.asset_type)
         stop_fmt = self._format_price(s.stop, s.asset_type)
         target_fmt = self._format_price(s.target, s.asset_type)
@@ -2055,22 +1893,13 @@ class TelegramNotifier:
     📊 R:R 1:{s.rr:.1f} | Conf: {int(s.confidence*100)}%
     ⏱️ LTF: {ltf}"""
 
-        # Send to BOTH chats
-        chat_ids = ["5747777199", "-1002841352895"]
-    
         success = False
-        for chat_id in chat_ids:
+        for chat_id in TELEGRAM_CHAT_IDS:
             try:
-                r = requests.post(
-                    self._url, 
-                    json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, 
-                    timeout=10
-                )
+                r = requests.post(self._url, json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, timeout=10)
                 if r.status_code == 200:
                     success = True
                     log.info(f"✅ Signal sent to chat {chat_id}")
-                else:
-                    log.warning(f"⚠️ Failed to send to {chat_id}: {r.status_code}")
             except Exception as e:
                 log.error(f"❌ Error sending to {chat_id}: {e}")
     
@@ -2079,9 +1908,8 @@ class TelegramNotifier:
     
         return success
 
-
 # =============================================================================
-# MAIN SCANNER - MULTI-ASSET
+# MAIN SCANNER
 # =============================================================================
 class EnhancedTCTScanner:
     def __init__(self):
@@ -2099,11 +1927,6 @@ class EnhancedTCTScanner:
         print("  ORIGINAL LECTURES 1-8: 100% PRESERVED")
         print("  ADVANCED PDF CONCEPTS: FULLY INTEGRATED")
         print("=" * 80)
-        print("  ✅ Levels 1,2,3 | QRZ (Primary/Internal) | 4-Variable Checklist")
-        print("  ✅ EHP Detection | Test Phase | Extended Tap | Correct Tab One")
-        print("  ✅ TCT Creating TCT | D-EEC/A-EEC | Range Duration Rules")
-        print("  ✅ Aggressive Third Taps | Context Ranking | A+ to C Grading")
-        print("=" * 80)
         print("  🎯 ASSETS SCANNED:")
         if ENABLE_CRYPTO:
             print(f"     🪙 CRYPTO: {len(CRYPTO_SYMBOLS)} pairs")
@@ -2117,26 +1940,24 @@ class EnhancedTCTScanner:
     
     def _analyze_symbol(self, symbol: str, asset_type: AssetType) -> Optional[EnhancedTCTSignal]:
         try:
-            # Fetch all required timeframes
             df_4h = self.data.fetch_ohlcv(symbol, "4h", 200, asset_type)
             df_1h = self.data.fetch_ohlcv(symbol, "1h", 200, asset_type)
             df_30m = self.data.fetch_ohlcv(symbol, "30m", 200, asset_type)
             df_15m = self.data.fetch_ohlcv(symbol, "15m", 200, asset_type)
             df_5m = self.data.fetch_ohlcv(symbol, "5m", 200, asset_type)
             
-            if len(df_4h) < 50:
+            if df_4h.empty or len(df_4h) < 50:
                 return None
             
             ltf_data = {}
-            if len(df_5m) >= 30: ltf_data['5m'] = df_5m
-            if len(df_15m) >= 30: ltf_data['15m'] = df_15m
-            if len(df_30m) >= 30: ltf_data['30m'] = df_30m
-            if len(df_1h) >= 30: ltf_data['1h'] = df_1h
+            if not df_5m.empty and len(df_5m) >= 30: ltf_data['5m'] = df_5m
+            if not df_15m.empty and len(df_15m) >= 30: ltf_data['15m'] = df_15m
+            if not df_30m.empty and len(df_30m) >= 30: ltf_data['30m'] = df_30m
+            if not df_1h.empty and len(df_1h) >= 30: ltf_data['1h'] = df_1h
             
             if not ltf_data:
                 return None
             
-            # Use clean symbol for display
             if asset_type == AssetType.CRYPTO:
                 display_symbol = symbol.replace('/USDT', '')
             else:
@@ -2155,27 +1976,16 @@ class EnhancedTCTScanner:
         all_symbols = self.data.get_all_symbols()
         print(f"\n{'─' * 60}")
         print(f"🔄 CYCLE #{self._cycle} [{ts}] | Scanning {len(all_symbols)} total assets")
-        crypto_count = sum(1 for _, t in all_symbols if t == AssetType.CRYPTO)
-        forex_count = sum(1 for _, t in all_symbols if t == AssetType.FOREX)
-        stock_count = sum(1 for _, t in all_symbols if t == AssetType.STOCK)
-        print(f"   🪙 Crypto: {crypto_count} | 💱 Forex: {forex_count} | 📈 Stocks: {stock_count}")
-        print(f"   🎯 Filter: A+ and A setups only (Conf≥90%, RR≥3, No 5m LTF)")
         
         found = []
         for symbol, asset_type in all_symbols:
             signal = self._analyze_symbol(symbol, asset_type)
             if signal:
-                # EASY FILTER - 3 CHECKS
                 if signal.confidence < 0.90:
-                    print(f"  ❌ {signal.symbol} - Confidence {int(signal.confidence*100)}% < 90%")
                     continue
-        
                 if signal.rr < 3.0:
-                    print(f"  ❌ {signal.symbol} - RR 1:{signal.rr:.1f} < 1:3")
                     continue
-        
-                if 'LTF(5m)' in signal.reason or 'LTF(5m)' in str(signal.reason):
-                    print(f"  ❌ {signal.symbol} - Using 5m LTF (need 15m+)")
+                if 'LTF(5m)' in signal.reason:
                     continue
         
                 found.append(signal)
@@ -2189,20 +1999,18 @@ class EnhancedTCTScanner:
         
                 print(f"\n  ✅ {asset_icon} {label} {signal.symbol} {grade_display} {ehp_mark}{test_mark}")
                 print(f"     Model: {signal.model.value}")
-                print(f"     Entry: ${signal.entry:.4f} | Stop: ${signal.stop:.4f}")
-                print(f"     Target: ${signal.target:.4f} | R:R 1:{signal.rr:.1f}")
-                print(f"     Conf: {int(signal.confidence*100)}% | QRZ: {signal.qrz.quality_score:.0%}")
+                print(f"     Entry: {signal.entry:.4f} | Stop: {signal.stop:.4f}")
+                print(f"     Target: {signal.target:.4f} | R:R 1:{signal.rr:.1f}")
+                print(f"     Conf: {int(signal.confidence*100)}%")
                 print(f"     Duration: {signal.range_duration_hours:.1f}h | {signal.reason[:50]}...")
         
                 self.tg.send_signal(signal)
     
     def run(self):
-        # Send startup message to BOTH chats
-        startup_msg = f"""🚀 <b>ENHANCED MULTI-ASSET BOT STARTED</b>
+        startup_msg = f"""🚀 ENHANCED MULTI-ASSET BOT STARTED
 
-✅ Original Lectures 1-8 (100%)
-✅ Advanced PDF Concepts (100%)
-✅ Levels 1-3, Phase
+✅ TCT Rules 100% Preserved
+✅ Advanced PDF Concepts Integrated
 ✅ Context Grading A+ to C
 
 📊 ASSETS SCANNED:
@@ -2210,7 +2018,7 @@ class EnhancedTCTScanner:
 {'💱 Forex: ' + str(len(FOREX_SYMBOLS)) if ENABLE_FOREX else ''}
 {'📈 Stocks: ' + str(len(STOCK_SYMBOLS)) if ENABLE_STOCKS else ''}
 
-🎯 <b>ONLY A+ and A SETUPS SENT</b>
+🎯 ONLY A+ and A SETUPS SENT
 🔔 Waiting for high-grade signals..."""
     
         for chat_id in TELEGRAM_CHAT_IDS:
@@ -2230,7 +2038,6 @@ class EnhancedTCTScanner:
                 log.error(f"Error: {e}")
                 traceback.print_exc()
             time.sleep(SCAN_INTERVAL_SECONDS)
-
 
 # =============================================================================
 # MAIN
