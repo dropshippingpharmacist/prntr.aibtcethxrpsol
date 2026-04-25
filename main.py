@@ -3,102 +3,6 @@
 ================================================================================
 ENHANCED PURE TCT BOT - 100% TCT RULES + ADVANCED PDF CONCEPTS
 ================================================================================
-
-ORIGINAL LECTURES 1-8 (100% PRESERVED):
-  ✓ 6-Candle Rule (2-2-2) - inside bars don't count
-  ✓ MS low/high confirmed ONLY when opposite TOUCHED
-  ✓ BOS requires CLOSE beyond level - good vs bad breaks
-  ✓ SFP/Wicks: 3 scenarios based on LTF structure
-  ✓ Domino Effect & Swarm strength grading
-  ✓ Range confirmed when equilibrium (0.5 Fib) TOUCHED
-  ✓ DL2 = 30% of range size - wick & bad break deviations
-  ✓ Premium/Discount zones - Good ranges (sideways, not V-shapes)
-  ✓ OBIF with mandatory FVG - Extreme S&D (last before range extreme)
-  ✓ Double Effect, Cascade, RTZ quality
-  ✓ Model 1/2 with tap spacing - Entry on BOS inside range
-  ✓ PO3 (Range→Manipulation→Expansion) - Two-tap exceptions
-  ✓ Position sizing, R:R minimum 2.0
-
-ADVANCED PDF CONCEPTS (NEW - FULLY INTEGRATED):
-
-SECTION 8.1 - LEVELS 1, 2, 3:
-  ✓ Level 1 = Primary focus (most important trend)
-  ✓ Level 2 = Counter-trend move within Level 1
-  ✓ Level 3 = Refined structure of most recent expansion
-  ✓ Domino Effect: Level 3 break → Level 2 → Level 1
-  ✓ Pivot confirmation after Level 2 broken
-
-SECTION 8.2 - QUALITY RETURN TO ZONE (QRZ):
-  ✓ Primary highs/lows - visible major pivot points
-  ✓ Internal highs/lows - smaller points between primaries
-  ✓ Liquidity TARGET vs Liquidity GRAB distinction
-  ✓ Regenerating liquidity targets (time spent near level)
-  ✓ Slow, grinding price action = high probability
-  ✓ Aggressive V-shaped = low probability
-
-SECTION 8.3 - HIGH-PROBABILITY S&D:
-  ✓ LTF validation of HTF order blocks
-  ✓ Overlapping effect (LTF S&D within HTF OB = highest priority)
-  ✓ Ranking by location (Macro pivot + liq sweep = best)
-  ✓ Market Maker S&D (third tap of previously played model)
-
-SECTION 8.4 - 4-VARIABLE CHECKLIST:
-  ✓ Variable 1: Quality QRZ
-  ✓ Variable 2: Range Duration (minimum ~1 day / 24 hours)
-  ✓ Variable 3: Quality Third Tap POI (at/deviating Tap 1)
-  ✓ Variable 4: Quality Breaker Structure (aggressive V-shape)
-
-SECTION C.1 - EHP (EXTRA HIGH PROBABILITY):
-  ✓ LTF extended model + HTF regular model simultaneously
-  ✓ Narrow Tap 2→Tap 3 with exceptional QRZ
-  ✓ Dual-timeframe confluence for ~90% win rate
-
-SECTION C.2 - THE TEST PHASE (Model One):
-  ✓ Deep test low grabbing prior expansion extremes
-  ✓ Entry on aggressive reversal from test low
-  ✓ Stop below test low, target = range extreme
-
-SECTION C.3 - EXTENDED TAP (4th/5th Tap):
-  ✓ LPS/LPS-y entries after initial confirmation
-  ✓ Model 2: trade 4th tap only (5th tap = de-risk only)
-  ✓ Model 1→Model 2: 5th tap IS tradable
-  ✓ Same high-probability variables required
-
-SECTION C.4 - CORRECT TAB ONE:
-  ✓ PSy/PS exhaustion move before true range
-  ✓ True Tab One = start of clean liquidity-building phase
-  ✓ Adjusting Tab One with justification
-
-SECTION C.5 - TCT CREATING TCT / D-EEC & A-EEC:
-  ✓ LTF model creates HTF tap (hedged entries)
-  ✓ D-EEC: Distribution→Expansion→Extreme Demand→Continuation
-  ✓ A-EEC: Accumulation→Expansion→Extreme Supply→Continuation
-  ✓ Mental framework for counter-trend moves
-
-SECTION C.6 - RANGE DURATION EXCEPTIONS:
-  ✓ Daily Range (Asia→London→NY open reversal) - ~15 hours
-  ✓ TCT Creating TCT (flawless LTF model)
-
-SECTION C.7 - AGGRESSIVE THIRD TAPS:
-  ✓ Label as "manipulation" via Timing or Technical context
-  ✓ Fake S/D (ignore S/D created during manipulation)
-  ✓ Low Timeframe Top Formation requirement for failed M2→M1
-
-SECTION D - EXECUTION:
-  ✓ Enter on break of cleanest structure level
-  ✓ Market order (90%) vs Limit order on retest (10%)
-  ✓ Stop trailing to new extreme S/D points
-  ✓ Partial TP to de-risk at opposing POIs
-  ✓ Extend targets only for obvious liquidity grabs
-
-SECTION E - CONTEXT BUILDING:
-  ✓ Foundation Rules (favor shorts at premium, longs at discount)
-  ✓ Context Ranking: Pro → Semi-Pro → Neutral → Semi-Counter → Counter
-  ✓ BTC & Altcoin correlation (Major & Satellite system)
-  ✓ Setup Grading: A+ to C
-  ✓ B&B (Bread & Butter) and Compression (FM-FM) boosters
-
-================================================================================
 """
 
 import math
@@ -111,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass, field
 from enum import Enum
 from collections import defaultdict
+import random
 
 import numpy as np
 import pandas as pd
@@ -119,7 +24,6 @@ import ccxt
 import yfinance as yf
 from scipy.signal import find_peaks
 from scipy import stats
-from fake_useragent import UserAgent
 
 warnings.filterwarnings("ignore")
 
@@ -1629,7 +1533,7 @@ class EnhancedTCTAnalyzer:
         return None
 
 # =============================================================================
-# DATA FETCHER - MULTI-ASSET WITH FIXED YAHOO FINANCE
+# DATA FETCHER - MULTI-ASSET WITH FIXED YAHOO FINANCE (NO FAKE-USERAGENT)
 # =============================================================================
 class MultiAssetDataFetcher:
     def __init__(self):
@@ -1651,18 +1555,30 @@ class MultiAssetDataFetcher:
         self._last_yahoo_request = 0
         self._yahoo_delay = 0.5
         
-        self.ua = UserAgent()
+        # Simple user agent rotation without fake-useragent
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+        ]
+        self.ua_index = 0
     
     def _setup_yfinance(self):
         self.yf_session = requests.Session()
         self.yf_session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         })
         yf.set_tz_cache_location(None)
+    
+    def _get_user_agent(self):
+        self.ua_index = (self.ua_index + 1) % len(self.user_agents)
+        return self.user_agents[self.ua_index]
     
     def _rate_limit(self):
         now = time.time()
@@ -1715,14 +1631,12 @@ class MultiAssetDataFetcher:
     
     def _fetch_forex_yahoo(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
         yf_symbol = f"{symbol}=X"
-        
         interval, period = self._get_yf_params(timeframe, limit)
         
         for attempt in range(3):
             try:
                 self._rate_limit()
-                
-                self.yf_session.headers.update({'User-Agent': self.ua.random})
+                self.yf_session.headers.update({'User-Agent': self._get_user_agent()})
                 
                 ticker = yf.Ticker(yf_symbol, session=self.yf_session)
                 df = ticker.history(period=period, interval=interval, prepost=False)
@@ -1743,7 +1657,7 @@ class MultiAssetDataFetcher:
                     return df
                     
             except Exception as e:
-                log.debug(f"Forex attempt {attempt+1} failed: {e}")
+                log.debug(f"Forex attempt {attempt+1} failed for {symbol}: {e}")
                 time.sleep(1)
         
         return pd.DataFrame()
@@ -1754,8 +1668,7 @@ class MultiAssetDataFetcher:
         for attempt in range(3):
             try:
                 self._rate_limit()
-                
-                self.yf_session.headers.update({'User-Agent': self.ua.random})
+                self.yf_session.headers.update({'User-Agent': self._get_user_agent()})
                 
                 ticker = yf.Ticker(symbol, session=self.yf_session)
                 df = ticker.history(period=period, interval=interval, prepost=False)
@@ -1776,7 +1689,7 @@ class MultiAssetDataFetcher:
                     return df
                     
             except Exception as e:
-                log.debug(f"Stock attempt {attempt+1} failed: {e}")
+                log.debug(f"Stock attempt {attempt+1} failed for {symbol}: {e}")
                 time.sleep(1)
         
         return pd.DataFrame()
@@ -1977,7 +1890,6 @@ class EnhancedTCTScanner:
         print(f"\n{'─' * 60}")
         print(f"🔄 CYCLE #{self._cycle} [{ts}] | Scanning {len(all_symbols)} total assets")
         
-        found = []
         for symbol, asset_type in all_symbols:
             signal = self._analyze_symbol(symbol, asset_type)
             if signal:
@@ -1988,7 +1900,6 @@ class EnhancedTCTScanner:
                 if 'LTF(5m)' in signal.reason:
                     continue
         
-                found.append(signal)
                 self._signals_found += 1
         
                 asset_icon = "🪙" if signal.asset_type == AssetType.CRYPTO else ("💱" if signal.asset_type == AssetType.FOREX else "📈")
@@ -1999,8 +1910,8 @@ class EnhancedTCTScanner:
         
                 print(f"\n  ✅ {asset_icon} {label} {signal.symbol} {grade_display} {ehp_mark}{test_mark}")
                 print(f"     Model: {signal.model.value}")
-                print(f"     Entry: {signal.entry:.4f} | Stop: {signal.stop:.4f}")
-                print(f"     Target: {signal.target:.4f} | R:R 1:{signal.rr:.1f}")
+                print(f"     Entry: ${signal.entry:.4f} | Stop: ${signal.stop:.4f}")
+                print(f"     Target: ${signal.target:.4f} | R:R 1:{signal.rr:.1f}")
                 print(f"     Conf: {int(signal.confidence*100)}%")
                 print(f"     Duration: {signal.range_duration_hours:.1f}h | {signal.reason[:50]}...")
         
