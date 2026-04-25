@@ -115,48 +115,22 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import requests
+import ccxt
+import yfinance as yf
 from scipy.signal import find_peaks
 from scipy import stats
-
-# OANDA imports
-try:
-    import oandapyV20
-    import oandapyV20.endpoints.instruments as instruments
-    from oandapyV20.contrib.requests import (
-        MarketOrderRequest, StopLossDetails, TakeProfitDetails
-    )
-    OANDA_AVAILABLE = True
-except ImportError:
-    OANDA_AVAILABLE = False
-    print("WARNING: oandapyV20 not installed. Run: pip install oandapyV20")
 
 warnings.filterwarnings("ignore")
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-TELEGRAM_BOT_TOKEN = "8335392741:AAGd0nMObLGljLleORQ9j-rCw9pW6vEqnLw"
-TELEGRAM_CHAT_ID = "5747777199"  # Only this chat ID now
+TELEGRAM_BOT_TOKEN = "8013335919:AAHCzQWVwP2Jsv0klNtTzF7qUX6PuD_gYZ0"
+TELEGRAM_CHAT_ID = "5747777199"  # Original (kept for compatibility)
+TELEGRAM_CHAT_IDS = ["5747777199", "-1002841352895"]  # Both chats
 
-# OANDA Configuration
-OANDA_API_KEY = "6828dd68c2fe72fa974a08fc54b8b336-16d62a645e87533cc37731b20bc6bff4"  # <-- YOU MUST REPLACE THIS
-OANDA_ACCOUNT_ID = "101-001-38930397-001"  # <-- YOU MUST REPLACE THIS
-OANDA_ENVIRONMENT = "practice"  # "practice" for demo, "live" for real
-
-# Instruments to scan (Forex, Indices, Metals, Commodities, Oil)
-INSTRUMENTS = [
-    # Forex (these work)
-    "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD", "USD_CHF", "NZD_USD",
-    "EUR_GBP", "EUR_JPY", "GBP_JPY", "AUD_JPY", "CAD_JPY", "CHF_JPY", "EUR_AUD",
-    # Metals (these work)
-    "XAU_USD", "XAG_USD",
-    # Oil (these work)
-    "BCO_USD", "WTICO_USD",
-    # Crypto (these work)
-    "BTC_USD", "ETH_USD",
-]
-
-MIN_VOLUME_USD = 100000  # For filtering (OANDA doesn't have volume, using spread instead)
+EXCHANGE_NAME = "bitget"
+MIN_VOLUME_USD = 100000
 MAX_PAIRS_TO_SCAN = 100
 SCAN_INTERVAL_SECONDS = 60
 
@@ -171,6 +145,34 @@ MAX_SIGNALS_PER_DAY = 30
 # Range Duration (Section 8.4 - Variable 2)
 MIN_RANGE_DURATION_HOURS = 24
 DAILY_RANGE_MIN_HOURS = 15  # Exception C.6
+
+# =============================================================================
+# ASSET CONFIGURATION
+# =============================================================================
+ENABLE_CRYPTO = True
+ENABLE_FOREX = True
+ENABLE_STOCKS = True
+
+# Forex pairs (Yahoo Finance format - will add =X suffix automatically)
+FOREX_SYMBOLS = [
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
+    "NZDUSD", "USDCHF", "EURGBP", "EURAUD", "GBPJPY",
+    "AUDJPY", "CADJPY", "CHFJPY", "EURJPY", "GBPAUD"
+]
+
+# Stock symbols (Yahoo Finance format)
+STOCK_SYMBOLS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    "JPM", "V", "WMT", "JNJ", "PG", "UNH", "HD", "DIS", "MA",
+    "BAC", "NFLX", "ADBE", "CRM", "AMD", "INTC", "PEP", "KO"
+]
+
+# Crypto symbols (for CCXT)
+CRYPTO_SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT",
+    "DOGE/USDT", "ADA/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT",
+    "MATIC/USDT", "UNI/USDT", "ATOM/USDT", "LTC/USDT", "ETC/USDT"
+]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -187,6 +189,11 @@ class Direction(Enum):
     LONG = "LONG"
     SHORT = "SHORT"
     FLAT = "FLAT"
+
+class AssetType(Enum):
+    CRYPTO = "crypto"
+    FOREX = "forex"
+    STOCK = "stock"
 
 class TCTModel(Enum):
     M1A = "Model 1 Accumulation"
@@ -756,7 +763,7 @@ class LiquidityDetector:
             return grabs
         
         highs, high_idx, lows, low_idx = find_swing_points(df, lookback=3)
-        avg_volume = float(df['volume'].tail(20).mean()) if 'volume' in df.columns else 1.0
+        avg_volume = float(df['volume'].tail(20).mean())
         
         for sp_price, sp_idx in zip(highs[-5:], high_idx[-5:]):
             for i in range(sp_idx + 1, min(sp_idx + 15, len(df))):
@@ -768,7 +775,7 @@ class LiquidityDetector:
                         continue
                     
                     confirmed = (i + 1 < len(df) and df.iloc[i+1]['close'] < sp_price)
-                    volume_spike = (candle['volume'] > avg_volume * 1.5) if 'volume' in df.columns else False
+                    volume_spike = candle['volume'] > avg_volume * 1.5
                     double_effect = confirmed and (volume_spike or candle['close'] > candle['open'])
                     cascade = confirmed and i + 3 < len(df) and all(
                         df.iloc[i+k]['close'] < df.iloc[i+k-1]['close'] for k in range(1, 3))
@@ -789,7 +796,7 @@ class LiquidityDetector:
                         continue
                     
                     confirmed = (i + 1 < len(df) and df.iloc[i+1]['close'] > sp_price)
-                    volume_spike = (candle['volume'] > avg_volume * 1.5) if 'volume' in df.columns else False
+                    volume_spike = candle['volume'] > avg_volume * 1.5
                     double_effect = confirmed and (volume_spike or candle['close'] < candle['open'])
                     cascade = confirmed and i + 3 < len(df) and all(
                         df.iloc[i+k]['close'] > df.iloc[i+k-1]['close'] for k in range(1, 3))
@@ -1005,6 +1012,7 @@ class EnhancedTCTSignal:
     tap1: float
     tap2: float
     tap3: float
+    asset_type: AssetType = AssetType.CRYPTO
     
     # Advanced concepts
     qrz: Optional[QRZAnalysis] = None
@@ -1251,7 +1259,8 @@ class EnhancedTCTAnalyzer:
         return False, ""
     
     def analyze(self, symbol: str, df_4h: pd.DataFrame, 
-                ltf_data: Dict[str, pd.DataFrame]) -> Optional[EnhancedTCTSignal]:
+                ltf_data: Dict[str, pd.DataFrame],
+                asset_type: AssetType = AssetType.CRYPTO) -> Optional[EnhancedTCTSignal]:
         
         if len(df_4h) < 50:
             return None
@@ -1399,7 +1408,8 @@ class EnhancedTCTAnalyzer:
                                 setup_grade=grade, is_ehp=is_ehp, has_test_phase=has_test,
                                 breaker_quality=ms.breaker_quality,
                                 range_duration_hours=valid_range.duration_hours,
-                                is_daily_range_exception=is_daily_exception
+                                is_daily_range_exception=is_daily_exception,
+                                asset_type=asset_type
                             )
         
         # =====================================================================
@@ -1477,7 +1487,8 @@ class EnhancedTCTAnalyzer:
                                 setup_grade=grade, is_ehp=is_ehp, has_test_phase=has_test,
                                 breaker_quality=ms.breaker_quality,
                                 range_duration_hours=valid_range.duration_hours,
-                                is_daily_range_exception=is_daily_exception
+                                is_daily_range_exception=is_daily_exception,
+                                asset_type=asset_type
                             )
         
         # =====================================================================
@@ -1496,7 +1507,8 @@ class EnhancedTCTAnalyzer:
                 extras["extreme_liq"] = True
             if extreme_ob and current_price >= extreme_ob.low * 0.99:
                 has_extreme = True
-                extras["extreme_ob"] = True            
+                extras["extreme_ob"] = True
+            
             if has_extreme:
                 tap3 = current_price
                 if self._check_tap_spacing(tap1, tap2, tap3) and tap3 < tap2:
@@ -1547,7 +1559,8 @@ class EnhancedTCTAnalyzer:
                                     valid_range=valid_range, tap1=tap1, tap2=tap2, tap3=tap3,
                                     qrz=qrz, levels=levels, context_rank=context,
                                     setup_grade=grade, breaker_quality=ms.breaker_quality,
-                                    range_duration_hours=valid_range.duration_hours
+                                    range_duration_hours=valid_range.duration_hours,
+                                    asset_type=asset_type
                                 )
         
         # =====================================================================
@@ -1618,7 +1631,8 @@ class EnhancedTCTAnalyzer:
                                     valid_range=valid_range, tap1=tap1, tap2=tap2, tap3=tap3,
                                     qrz=qrz, levels=levels, context_rank=context,
                                     setup_grade=grade, breaker_quality=ms.breaker_quality,
-                                    range_duration_hours=valid_range.duration_hours
+                                    range_duration_hours=valid_range.duration_hours,
+                                    asset_type=asset_type
                                 )
         
         # =====================================================================
@@ -1663,7 +1677,8 @@ class EnhancedTCTAnalyzer:
                                     reason=f"PO3 Bullish | LTF({best_tf_long}) | Grade:{grade.value}",
                                     valid_range=valid_range, tap1=valid_range.low, tap2=manip_low, tap3=current_price,
                                     qrz=qrz, levels=levels, context_rank=context, setup_grade=grade,
-                                    range_duration_hours=valid_range.duration_hours
+                                    range_duration_hours=valid_range.duration_hours,
+                                    asset_type=asset_type
                                 )
         
         # =====================================================================
@@ -1708,7 +1723,8 @@ class EnhancedTCTAnalyzer:
                                     reason=f"PO3 Bearish | LTF({best_tf_short}) | Grade:{grade.value}",
                                     valid_range=valid_range, tap1=valid_range.high, tap2=manip_high, tap3=current_price,
                                     qrz=qrz, levels=levels, context_rank=context, setup_grade=grade,
-                                    range_duration_hours=valid_range.duration_hours
+                                    range_duration_hours=valid_range.duration_hours,
+                                    asset_type=asset_type
                                 )
         
         # =====================================================================
@@ -1738,7 +1754,8 @@ class EnhancedTCTAnalyzer:
                         position_size=self._calc_position(entry, stop, confidence),
                         reason=f"Two-Tap Short | RTZ={rtz:.2f}",
                         valid_range=valid_range, tap1=valid_range.high, tap2=high_devs[0], tap3=current_price,
-                        qrz=qrz, range_duration_hours=valid_range.duration_hours
+                        qrz=qrz, range_duration_hours=valid_range.duration_hours,
+                        asset_type=asset_type
                     )
         
         if len(low_devs) == 1 and rtz > 0.55 and valid_entry_long and ltf_confirmed_long:
@@ -1765,91 +1782,196 @@ class EnhancedTCTAnalyzer:
                         position_size=self._calc_position(entry, stop, confidence),
                         reason=f"Two-Tap Long | RTZ={rtz:.2f}",
                         valid_range=valid_range, tap1=valid_range.low, tap2=low_devs[0], tap3=current_price,
-                        qrz=qrz, range_duration_hours=valid_range.duration_hours
+                        qrz=qrz, range_duration_hours=valid_range.duration_hours,
+                        asset_type=asset_type
                     )
         
         return None
 
 
 # =============================================================================
-# DATA FETCHER - OANDA VERSION
+# DATA FETCHER - MULTI-ASSET (CRYPTO, FOREX, STOCKS)
 # =============================================================================
-class DataFetcher:
+class MultiAssetDataFetcher:
+    """Fetches data for crypto (CCXT), forex (yfinance), and stocks (yfinance)"""
+    
     def __init__(self):
-        if not OANDA_AVAILABLE:
-            raise ImportError("oandapyV20 not installed. Run: pip install oandapyV20")
+        # Crypto exchange
+        self.crypto_exchange = ccxt.bitget({
+            'enableRateLimit': True,
+            'timeout': 30000,
+            'options': {'defaultType': 'spot'}
+        })
         
-        self.api_key = OANDA_API_KEY
-        self.account_id = OANDA_ACCOUNT_ID
-        self.environment = OANDA_ENVIRONMENT
-        
-        # Create OANDA client
-        self.client = oandapyV20.API(access_token=self.api_key, environment=self.environment)
-        
+        # Cache for all asset types
         self._cache: Dict[str, Tuple[pd.DataFrame, float]] = {}
         self._ttl = 180
+        
+        # Symbol lists by type
+        self.crypto_symbols = CRYPTO_SYMBOLS
+        self.forex_symbols = FOREX_SYMBOLS
+        self.stock_symbols = STOCK_SYMBOLS
     
-    def get_all_instruments(self) -> List[str]:
-        """Return the list of instruments to scan"""
-        return INSTRUMENTS
+    def fetch_ohlcv(self, symbol: str, timeframe: str = "4h", 
+                    limit: int = 200, asset_type: AssetType = AssetType.CRYPTO) -> pd.DataFrame:
+        """Fetch OHLCV data for any asset type"""
+        cache_key = f"{symbol}_{timeframe}_{limit}_{asset_type.value}"
+        
+        # Check cache
+        if cache_key in self._cache:
+            df, timestamp = self._cache[cache_key]
+            if time.time() - timestamp < self._ttl:
+                return df.copy()
+        
+        # Fetch based on asset type
+        if asset_type == AssetType.CRYPTO:
+            df = self._fetch_crypto(symbol, timeframe, limit)
+        elif asset_type == AssetType.FOREX:
+            df = self._fetch_forex(symbol, timeframe, limit)
+        else:  # STOCK
+            df = self._fetch_stock(symbol, timeframe, limit)
+        
+        # Cache if not empty
+        if not df.empty:
+            self._cache[cache_key] = (df.copy(), time.time())
+        
+        return df
     
-    def fetch_ohlcv(self, symbol: str, timeframe: str = "4h", limit: int = 200) -> pd.DataFrame:
-        """Fetch OHLCV data from OANDA"""
-        key = f"{symbol}_{timeframe}_{limit}"
-        if key in self._cache and time.time() - self._cache[key][1] < self._ttl:
-            return self._cache[key][0]
+    def _fetch_crypto(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+        """Fetch crypto data via CCXT"""
+        tf_map = {'5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h'}
         
         try:
-            # OANDA timeframe mapping
-            tf_map = {
-                '5m': 'M5',
-                '15m': 'M15',
-                '30m': 'M30',
-                '1h': 'H1',
-                '4h': 'H4',
-            }
-            
-            oanda_tf = tf_map.get(timeframe, 'H4')
-            
-            # Build request
-            params = {
-                "count": limit,
-                "granularity": oanda_tf,
-                "price": "M"  # Midpoint candles
-            }
-            
-            request = instruments.InstrumentsCandles(instrument=symbol, params=params)
-            response = self.client.request(request)
-            
-            if 'candles' not in response:
+            ohlcv = self.crypto_exchange.fetch_ohlcv(
+                symbol, 
+                timeframe=tf_map.get(timeframe, '4h'),
+                limit=limit
+            )
+            if not ohlcv:
                 return pd.DataFrame()
             
-            # Parse candles
-            data = []
-            for candle in response['candles']:
-                if candle['complete']:
-                    data.append({
-                        'timestamp': candle['time'],
-                        'open': float(candle['mid']['o']),
-                        'high': float(candle['mid']['h']),
-                        'low': float(candle['mid']['l']),
-                        'close': float(candle['mid']['c']),
-                        'volume': 0  # OANDA doesn't provide volume
-                    })
-            
-            if not data:
-                return pd.DataFrame()
-            
-            df = pd.DataFrame(data)
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
-            
-            self._cache[key] = (df, time.time())
             return df
             
         except Exception as e:
-            log.error(f"Error fetching {symbol} {timeframe}: {e}")
+            log.debug(f"Crypto fetch error {symbol}: {e}")
             return pd.DataFrame()
+    
+    def _fetch_forex(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+        """Fetch forex data via Yahoo Finance (adds =X suffix automatically)"""
+        yf_symbol = f"{symbol}=X"
+        
+        # Map timeframe to yfinance interval and calculate period
+        interval, period = self._get_yf_params(timeframe, limit)
+        
+        try:
+            ticker = yf.Ticker(yf_symbol)
+            df = ticker.history(period=period, interval=interval)
+            
+            if df.empty:
+                return pd.DataFrame()
+            
+            # Standardize column names
+            df.columns = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'splits']
+            df = df[['open', 'high', 'low', 'close', 'volume']]
+            
+            # Resample 4h if needed (yfinance doesn't have native 4h)
+            if timeframe == '4h' and interval == '1h':
+                df = df.resample('4H').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+                if len(df) > limit:
+                    df = df.iloc[-limit:]
+            
+            return df
+            
+        except Exception as e:
+            log.debug(f"Forex fetch error {symbol}: {e}")
+            return pd.DataFrame()
+    
+    def _fetch_stock(self, symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+        """Fetch stock data via Yahoo Finance"""
+        # Map timeframe to yfinance interval and calculate period
+        interval, period = self._get_yf_params(timeframe, limit)
+        
+        try:
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period=period, interval=interval)
+            
+            if df.empty:
+                return pd.DataFrame()
+            
+            # Standardize column names
+            df.columns = ['open', 'high', 'low', 'close', 'volume', 'dividends', 'splits']
+            df = df[['open', 'high', 'low', 'close', 'volume']]
+            
+            # Resample 4h if needed
+            if timeframe == '4h' and interval == '1h':
+                df = df.resample('4H').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+                if len(df) > limit:
+                    df = df.iloc[-limit:]
+            
+            return df
+            
+        except Exception as e:
+            log.debug(f"Stock fetch error {symbol}: {e}")
+            return pd.DataFrame()
+    
+    def _get_yf_params(self, timeframe: str, limit: int) -> Tuple[str, str]:
+        """Get yfinance interval and period parameters"""
+        # Map timeframe to yfinance interval
+        tf_map = {
+            '5m': '5m',
+            '15m': '15m',
+            '30m': '30m',
+            '1h': '1h',
+            '4h': '1h',  # Will resample
+            '1d': '1d',
+        }
+        interval = tf_map.get(timeframe, '1h')
+        
+        # Calculate period based on limit
+        multiplier = {'5m': 5, '15m': 15, '30m': 30, '1h': 60, '1d': 1440}.get(interval, 60)
+        minutes_needed = multiplier * limit
+        hours_needed = minutes_needed / 60
+        
+        if hours_needed < 48:
+            period = f"{max(int(hours_needed), 1)}h"
+        else:
+            days_needed = int(hours_needed / 24) + 2
+            period = f"{days_needed}d"
+        
+        return interval, period
+    
+    def get_all_symbols(self) -> List[Tuple[str, AssetType]]:
+        """Get all symbols to scan with their asset types"""
+        all_symbols = []
+        
+        if ENABLE_CRYPTO:
+            for sym in self.crypto_symbols:
+                all_symbols.append((sym, AssetType.CRYPTO))
+        
+        if ENABLE_FOREX:
+            for sym in self.forex_symbols:
+                all_symbols.append((sym, AssetType.FOREX))
+        
+        if ENABLE_STOCKS:
+            for sym in self.stock_symbols:
+                all_symbols.append((sym, AssetType.STOCK))
+        
+        return all_symbols
 
 
 # =============================================================================
@@ -1861,10 +1983,19 @@ class TelegramNotifier:
         self._sent_signals = defaultdict(list)
     
     @staticmethod
-    def _format_price(p: float) -> str:
-        if p > 1000: return f"${p:,.2f}"
-        if p > 1: return f"${p:.4f}"
-        return f"${p:.6f}"
+    def _format_price(p: float, asset_type: AssetType = AssetType.CRYPTO) -> str:
+        if asset_type == AssetType.STOCK:
+            return f"${p:.2f}"
+        elif asset_type == AssetType.FOREX:
+            if p < 1:
+                return f"{p:.5f}"
+            return f"{p:.4f}"
+        else:  # CRYPTO
+            if p > 1000:
+                return f"${p:,.2f}"
+            elif p > 1:
+                return f"${p:.4f}"
+            return f"${p:.6f}"
     
     def can_send(self, symbol: str) -> bool:
         now = datetime.now()
@@ -1892,60 +2023,69 @@ class TelegramNotifier:
             match = re.search(r'LTF\(([^)]+)\)', s.reason)
             if match:
                 ltf = match.group(1)
-
-        # Green for LONG, Red for SHORT
+        
+        # Asset type emoji
+        asset_emoji = {
+            AssetType.CRYPTO: "🪙",
+            AssetType.FOREX: "💱",
+            AssetType.STOCK: "📈"
+        }.get(s.asset_type, "🪙")
+        
+        # Direction text and emoji
         if s.direction == Direction.LONG:
             direction_text = "🟢 LONG"
         else:
             direction_text = "🔴 SHORT"
-
-        msg = f"""{direction_text} {s.symbol}
-    💰 Entry: {self._format_price(s.entry)}
-    🛑 Stop: {self._format_price(s.stop)}
-    🎯 Target: {self._format_price(s.target)}
-    📈 TP1: {self._format_price(s.tp1)}
-    📈 TP2: {self._format_price(s.tp2)}
-    📈 TP3: {self._format_price(s.tp3)}
+        
+        # Format price based on asset type
+        entry_fmt = self._format_price(s.entry, s.asset_type)
+        stop_fmt = self._format_price(s.stop, s.asset_type)
+        target_fmt = self._format_price(s.target, s.asset_type)
+        tp1_fmt = self._format_price(s.tp1, s.asset_type)
+        tp2_fmt = self._format_price(s.tp2, s.asset_type)
+        tp3_fmt = self._format_price(s.tp3, s.asset_type)
+        
+        msg = f"""{asset_emoji} {direction_text} {s.symbol}
+    💰 Entry: {entry_fmt}
+    🛑 Stop: {stop_fmt}
+    🎯 Target: {target_fmt}
+    📈 TP1: {tp1_fmt}
+    📈 TP2: {tp2_fmt}
+    📈 TP3: {tp3_fmt}
     📊 R:R 1:{s.rr:.1f} | Conf: {int(s.confidence*100)}%
     ⏱️ LTF: {ltf}"""
 
-        # Send to the single chat ID
-        try:
-            r = requests.post(
-                self._url, 
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, 
-                timeout=10
-            )
-            if r.status_code == 200:
-                log.info(f"✅ Signal sent to chat {TELEGRAM_CHAT_ID}")
-                self.record_signal(s.symbol)
-                return True
-            else:
-                log.warning(f"⚠️ Failed to send: {r.status_code}")
-                return False
-        except Exception as e:
-            log.error(f"❌ Error sending: {e}")
-            return False
+        # Send to BOTH chats
+        chat_ids = ["5747777199", "-1002841352895"]
+    
+        success = False
+        for chat_id in chat_ids:
+            try:
+                r = requests.post(
+                    self._url, 
+                    json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, 
+                    timeout=10
+                )
+                if r.status_code == 200:
+                    success = True
+                    log.info(f"✅ Signal sent to chat {chat_id}")
+                else:
+                    log.warning(f"⚠️ Failed to send to {chat_id}: {r.status_code}")
+            except Exception as e:
+                log.error(f"❌ Error sending to {chat_id}: {e}")
+    
+        if success:
+            self.record_signal(s.symbol)
+    
+        return success
 
 
 # =============================================================================
-# MAIN SCANNER
+# MAIN SCANNER - MULTI-ASSET
 # =============================================================================
 class EnhancedTCTScanner:
     def __init__(self):
-        if not OANDA_AVAILABLE:
-            raise ImportError("oandapyV20 not installed. Run: pip install oandapyV20")
-        
-        if OANDA_API_KEY == "YOUR_OANDA_API_KEY_HERE":
-            log.error("=" * 60)
-            log.error("ERROR: You must set your OANDA API credentials!")
-            log.error("Edit the script and set:")
-            log.error("  OANDA_API_KEY = 'your-api-key-here'")
-            log.error("  OANDA_ACCOUNT_ID = 'your-account-id-here'")
-            log.error("=" * 60)
-            raise ValueError("OANDA credentials not configured")
-        
-        self.data = DataFetcher()
+        self.data = MultiAssetDataFetcher()
         self.tct = EnhancedTCTAnalyzer()
         self.tg = TelegramNotifier()
         self._cycle = 0
@@ -1954,33 +2094,35 @@ class EnhancedTCTScanner:
     
     def _banner(self):
         print("\n" + "=" * 80)
-        print("  ENHANCED PURE TCT BOT - OANDA VERSION")
+        print("  ENHANCED PURE TCT BOT - MULTI-ASSET (CRYPTO + FOREX + STOCKS)")
         print("=" * 80)
         print("  ORIGINAL LECTURES 1-8: 100% PRESERVED")
         print("  ADVANCED PDF CONCEPTS: FULLY INTEGRATED")
-        print("=" * 80)
-        print("  ASSETS SCANNED:")
-        print("  ✅ Forex: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, etc.")
-        print("  ✅ Indices: SPX500, NAS100, UK100, GER30")
-        print("  ✅ Metals: Gold (XAU/USD), Silver (XAG/USD)")
-        print("  ✅ Commodities: Copper, Platinum")
-        print("  ✅ Oil: Brent Crude, WTI Crude")
         print("=" * 80)
         print("  ✅ Levels 1,2,3 | QRZ (Primary/Internal) | 4-Variable Checklist")
         print("  ✅ EHP Detection | Test Phase | Extended Tap | Correct Tab One")
         print("  ✅ TCT Creating TCT | D-EEC/A-EEC | Range Duration Rules")
         print("  ✅ Aggressive Third Taps | Context Ranking | A+ to C Grading")
         print("=" * 80)
+        print("  🎯 ASSETS SCANNED:")
+        if ENABLE_CRYPTO:
+            print(f"     🪙 CRYPTO: {len(CRYPTO_SYMBOLS)} pairs")
+        if ENABLE_FOREX:
+            print(f"     💱 FOREX: {len(FOREX_SYMBOLS)} pairs")
+        if ENABLE_STOCKS:
+            print(f"     📈 STOCKS: {len(STOCK_SYMBOLS)} symbols")
+        print("=" * 80)
         print("  🎯 ONLY A+ and A GRADE SETUPS ARE SENT")
         print("=" * 80 + "\n")
     
-    def _analyze_symbol(self, symbol: str) -> Optional[EnhancedTCTSignal]:
+    def _analyze_symbol(self, symbol: str, asset_type: AssetType) -> Optional[EnhancedTCTSignal]:
         try:
-            df_4h = self.data.fetch_ohlcv(symbol, "4h", 200)
-            df_1h = self.data.fetch_ohlcv(symbol, "1h", 200)
-            df_30m = self.data.fetch_ohlcv(symbol, "30m", 200)
-            df_15m = self.data.fetch_ohlcv(symbol, "15m", 200)
-            df_5m = self.data.fetch_ohlcv(symbol, "5m", 200)
+            # Fetch all required timeframes
+            df_4h = self.data.fetch_ohlcv(symbol, "4h", 200, asset_type)
+            df_1h = self.data.fetch_ohlcv(symbol, "1h", 200, asset_type)
+            df_30m = self.data.fetch_ohlcv(symbol, "30m", 200, asset_type)
+            df_15m = self.data.fetch_ohlcv(symbol, "15m", 200, asset_type)
+            df_5m = self.data.fetch_ohlcv(symbol, "5m", 200, asset_type)
             
             if len(df_4h) < 50:
                 return None
@@ -1994,53 +2136,58 @@ class EnhancedTCTScanner:
             if not ltf_data:
                 return None
             
-            # Clean symbol for display (remove underscore)
-            clean_symbol = symbol.replace('_', '/')
-            return self.tct.analyze(clean_symbol, df_4h, ltf_data)
+            # Use clean symbol for display
+            if asset_type == AssetType.CRYPTO:
+                display_symbol = symbol.replace('/USDT', '')
+            else:
+                display_symbol = symbol
+            
+            return self.tct.analyze(display_symbol, df_4h, ltf_data, asset_type)
             
         except Exception as e:
-            log.debug(f"Error analyzing {symbol}: {e}")
+            log.debug(f"Analysis error for {symbol}: {e}")
             return None
     
     def run_once(self):
         self._cycle += 1
         ts = datetime.now().strftime("%H:%M:%S")
         
-        instruments = self.data.get_all_instruments()
+        all_symbols = self.data.get_all_symbols()
         print(f"\n{'─' * 60}")
-        print(f"🔄 CYCLE #{self._cycle} [{ts}] | Scanning {len(instruments)} instruments")
-        print(f"   🎯 Filter: A+ and A setups only")
+        print(f"🔄 CYCLE #{self._cycle} [{ts}] | Scanning {len(all_symbols)} total assets")
+        crypto_count = sum(1 for _, t in all_symbols if t == AssetType.CRYPTO)
+        forex_count = sum(1 for _, t in all_symbols if t == AssetType.FOREX)
+        stock_count = sum(1 for _, t in all_symbols if t == AssetType.STOCK)
+        print(f"   🪙 Crypto: {crypto_count} | 💱 Forex: {forex_count} | 📈 Stocks: {stock_count}")
+        print(f"   🎯 Filter: A+ and A setups only (Conf≥90%, RR≥3, No 5m LTF)")
         
         found = []
-        for instrument in instruments:
-            signal = self._analyze_symbol(instrument)
+        for symbol, asset_type in all_symbols:
+            signal = self._analyze_symbol(symbol, asset_type)
             if signal:
-                # ========== EASY FILTER - JUST 3 CHECKS ==========
-                # 1. Skip if confidence less than 90%
+                # EASY FILTER - 3 CHECKS
                 if signal.confidence < 0.90:
                     print(f"  ❌ {signal.symbol} - Confidence {int(signal.confidence*100)}% < 90%")
                     continue
         
-                # 2. Skip if RR less than 3.0
                 if signal.rr < 3.0:
                     print(f"  ❌ {signal.symbol} - RR 1:{signal.rr:.1f} < 1:3")
                     continue
         
-                # 3. Skip if using 5m (check reason string for 'LTF(5m)')
                 if 'LTF(5m)' in signal.reason or 'LTF(5m)' in str(signal.reason):
                     print(f"  ❌ {signal.symbol} - Using 5m LTF (need 15m+)")
                     continue
-                # ================================================
         
                 found.append(signal)
                 self._signals_found += 1
         
+                asset_icon = "🪙" if signal.asset_type == AssetType.CRYPTO else ("💱" if signal.asset_type == AssetType.FOREX else "📈")
                 label = "🟢 LONG" if signal.direction == Direction.LONG else "🔴 SHORT"
                 grade_display = f"[{signal.setup_grade.value}]"
                 ehp_mark = "🔥" if signal.is_ehp else ""
                 test_mark = "🧪" if signal.has_test_phase else ""
         
-                print(f"\n  ✅ {label} {signal.symbol} {grade_display} {ehp_mark}{test_mark}")
+                print(f"\n  ✅ {asset_icon} {label} {signal.symbol} {grade_display} {ehp_mark}{test_mark}")
                 print(f"     Model: {signal.model.value}")
                 print(f"     Entry: ${signal.entry:.4f} | Stop: ${signal.stop:.4f}")
                 print(f"     Target: ${signal.target:.4f} | R:R 1:{signal.rr:.1f}")
@@ -2050,14 +2197,28 @@ class EnhancedTCTScanner:
                 self.tg.send_signal(signal)
     
     def run(self):
-        # Send startup message
-        startup_msg = "🚀 <b>ENHANCED BOT STARTED (OANDA VERSION)</b>\n\n✅ Original Lectures 1-8 (100%)\n✅ Advanced PDF Concepts (100%)\n✅ Levels 1-3, Phase\n✅ Context Grading A+ to C\n\n📊 Instruments: Forex, Indices, Metals, Commodities, Oil\n\n🎯 <b>ONLY A+ and A SETUPS SENT</b>\n\n🔔 Waiting for high-grade signals..."
+        # Send startup message to BOTH chats
+        startup_msg = f"""🚀 <b>ENHANCED MULTI-ASSET BOT STARTED</b>
+
+✅ Original Lectures 1-8 (100%)
+✅ Advanced PDF Concepts (100%)
+✅ Levels 1-3, Phase
+✅ Context Grading A+ to C
+
+📊 ASSETS SCANNED:
+{'🪙 Crypto: ' + str(len(CRYPTO_SYMBOLS)) if ENABLE_CRYPTO else ''}
+{'💱 Forex: ' + str(len(FOREX_SYMBOLS)) if ENABLE_FOREX else ''}
+{'📈 Stocks: ' + str(len(STOCK_SYMBOLS)) if ENABLE_STOCKS else ''}
+
+🎯 <b>ONLY A+ and A SETUPS SENT</b>
+🔔 Waiting for high-grade signals..."""
     
-        try:
-            requests.post(self.tg._url, json={"chat_id": TELEGRAM_CHAT_ID, "text": startup_msg, "parse_mode": "HTML"}, timeout=10)
-            log.info(f"✅ Startup message sent to chat {TELEGRAM_CHAT_ID}")
-        except Exception as e:
-            log.error(f"❌ Failed to send startup message: {e}")
+        for chat_id in TELEGRAM_CHAT_IDS:
+            try:
+                requests.post(self.tg._url, json={"chat_id": chat_id, "text": startup_msg, "parse_mode": "HTML"}, timeout=10)
+                log.info(f"✅ Startup message sent to chat {chat_id}")
+            except Exception as e:
+                log.error(f"❌ Failed to send startup message to {chat_id}: {e}")
     
         while True:
             try:
@@ -2075,30 +2236,5 @@ class EnhancedTCTScanner:
 # MAIN
 # =============================================================================
 if __name__ == "__main__":
-    # Check if OANDA is available
-    if not OANDA_AVAILABLE:
-        print("\n" + "=" * 60)
-        print("ERROR: oandapyV20 not installed!")
-        print("Run: pip install oandapyV20")
-        print("=" * 60)
-        exit(1)
-    
-    # Check if credentials are set
-    if OANDA_API_KEY == "YOUR_OANDA_API_KEY_HERE" or OANDA_ACCOUNT_ID == "YOUR_OANDA_ACCOUNT_ID_HERE":
-        print("\n" + "=" * 60)
-        print("ERROR: OANDA credentials not configured!")
-        print("Please edit the script and set:")
-        print("  OANDA_API_KEY = 'your-api-key-here'")
-        print("  OANDA_ACCOUNT_ID = 'your-account-id-here'")
-        print("=" * 60)
-        print("\nTo get OANDA API credentials:")
-        print("1. Go to https://www.oanda.com")
-        print("2. Create a free demo account")
-        print("3. Go to 'Manage API Access'")
-        print("4. Create a new API token")
-        print("5. Copy the token and account ID into the script")
-        print("=" * 60)
-        exit(1)
-    
     scanner = EnhancedTCTScanner()
     scanner.run()
