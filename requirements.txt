@@ -1,17 +1,17 @@
-# requirements.txt - FOR OANDA VERSION
-
-# OANDA API (REQUIRED)
-oandapyV20==0.6.3
+# NO CCXT NEEDED - Just yfinance for stocks & forex
 
 # Data Processing
 pandas==2.2.3
 numpy==2.0.1
 
-# Scientific Computing (for find_peaks, stats)
+# Stock & Forex Data (Yahoo Finance)
+yfinance==0.2.40
+
+# Scientific Computing
 scipy==1.14.1
 
 # HTTP Requests (Telegram)
 requests==2.31.0
 
-# Optional but recommended
+# Optional
 python-dotenv==1.0.1
