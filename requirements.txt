@@ -1,11 +1,14 @@
-# NO CCXT NEEDED - Just yfinance for stocks & forex
+# ALL ASSETS - Crypto + Stocks + Forex
+
+# Crypto Exchange (CCXT)
+ccxt==4.3.30
+
+# Stock & Forex Data (Yahoo Finance)
+yfinance==0.2.40
 
 # Data Processing
 pandas==2.2.3
 numpy==2.0.1
-
-# Stock & Forex Data (Yahoo Finance)
-yfinance==0.2.40
 
 # Scientific Computing
 scipy==1.14.1
